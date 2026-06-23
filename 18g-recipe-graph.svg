@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+<title id="title">Shot time vs grind for 18g Recipe</title>
+<desc id="desc">Coffee recipe graph showing recorded shot samples and Theil-Sen prediction line.</desc>
+<rect width="100%" height="100%" fill="#fbfaf7"/>
+<text x="84" y="34" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#1f2933">18g Recipe</text>
+<text x="84" y="58" font-family="Arial, sans-serif" font-size="13" fill="#52606d">dose 18g - 2 samples - time = -15.00 + 2.50 * grind - R2 1.00</text>
+<rect x="84" y="74" width="842" height="412" fill="#ffffff" stroke="#d9e2ec"/>
+<line x1="84.00" y1="74.00" x2="84.00" y2="486.00" stroke="#edf1f5"/>
+<line x1="84.00" y1="486.00" x2="84.00" y2="492.00" stroke="#9fb3c8"/>
+<text x="84.00" y="510.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#52606d">1</text>
+<line x1="278.31" y1="74.00" x2="278.31" y2="486.00" stroke="#edf1f5"/>
+<line x1="278.31" y1="486.00" x2="278.31" y2="492.00" stroke="#9fb3c8"/>
+<text x="278.31" y="510.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#52606d">10</text>
+<line x1="494.21" y1="74.00" x2="494.21" y2="486.00" stroke="#edf1f5"/>
+<line x1="494.21" y1="486.00" x2="494.21" y2="492.00" stroke="#9fb3c8"/>
+<text x="494.21" y="510.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#52606d">20</text>
+<line x1="710.10" y1="74.00" x2="710.10" y2="486.00" stroke="#edf1f5"/>
+<line x1="710.10" y1="486.00" x2="710.10" y2="492.00" stroke="#9fb3c8"/>
+<text x="710.10" y="510.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#52606d">30</text>
+<line x1="926.00" y1="74.00" x2="926.00" y2="486.00" stroke="#edf1f5"/>
+<line x1="926.00" y1="486.00" x2="926.00" y2="492.00" stroke="#9fb3c8"/>
+<text x="926.00" y="510.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#52606d">40</text>
+<line x1="84.00" y1="486.00" x2="926.00" y2="486.00" stroke="#edf1f5"/>
+<line x1="78.00" y1="486.00" x2="84.00" y2="486.00" stroke="#9fb3c8"/>
+<text x="72.00" y="490.00" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#52606d">-23.00s</text>
+<line x1="84.00" y1="383.00" x2="926.00" y2="383.00" stroke="#edf1f5"/>
+<line x1="78.00" y1="383.00" x2="84.00" y2="383.00" stroke="#9fb3c8"/>
+<text x="72.00" y="387.00" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#52606d">6.50s</text>
+<line x1="84.00" y1="280.00" x2="926.00" y2="280.00" stroke="#edf1f5"/>
+<line x1="78.00" y1="280.00" x2="84.00" y2="280.00" stroke="#9fb3c8"/>
+<text x="72.00" y="284.00" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#52606d">36.00s</text>
+<line x1="84.00" y1="177.00" x2="926.00" y2="177.00" stroke="#edf1f5"/>
+<line x1="78.00" y1="177.00" x2="84.00" y2="177.00" stroke="#9fb3c8"/>
+<text x="72.00" y="181.00" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#52606d">65.50s</text>
+<line x1="84.00" y1="74.00" x2="926.00" y2="74.00" stroke="#edf1f5"/>
+<line x1="78.00" y1="74.00" x2="84.00" y2="74.00" stroke="#9fb3c8"/>
+<text x="72.00" y="78.00" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#52606d">95.00s</text>
+<line x1="84.00" y1="449.34" x2="926.00" y2="108.92" stroke="#2563eb" stroke-width="3"/>
+<line x1="84.00" y1="300.95" x2="926.00" y2="300.95" stroke="#d97706" stroke-width="2" stroke-dasharray="7 5"/>
+<line x1="451.03" y1="74.00" x2="451.03" y2="486.00" stroke="#d97706" stroke-width="2" stroke-dasharray="7 5"/>
+<circle cx="451.03" cy="300.95" r="6" fill="#d97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="407.85" cy="318.41" r="5" fill="#0f766e" stroke="#ffffff" stroke-width="2"/>
+<circle cx="494.21" cy="283.49" r="5" fill="#0f766e" stroke="#ffffff" stroke-width="2"/>
+<text x="471.00" y="542.00" font-family="Arial, sans-serif" font-size="13" fill="#1f2933">grind setting</text>
+<text x="22" y="336.00" transform="rotate(-90 22 336.00)" font-family="Arial, sans-serif" font-size="13" fill="#1f2933">shot time seconds</text>
+<g font-family="Arial, sans-serif" font-size="13" fill="#1f2933">
+  <rect x="630.00" y="90" width="286" height="68" rx="6" fill="#ffffff" stroke="#d9e2ec"/>
+  <circle cx="650.00" cy="111" r="5" fill="#0f766e"/>
+  <text x="666.00" y="116">sample</text>
+  <line x1="644.00" y1="136" x2="674.00" y2="136" stroke="#2563eb" stroke-width="3"/>
+  <text x="686.00" y="141">Theil-Sen prediction line</text>
+  <text x="630.00" y="178" font-size="14" font-weight="700" fill="#92400e">target 30.00s -> grind 18.00</text>
+</g>
+</svg>

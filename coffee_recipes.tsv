@@ -1,0 +1,32 @@
+record_type	recipe	dose_weight_g	time	grind
+recipe	My Coffee Recipe	18		
+recipe	Citrus Dawn 15	15		
+recipe	Honey Orchard 16	16		
+recipe	Velvet Cacao 17	17		
+recipe	Berry Circuit 18	18		
+recipe	Maple Altitude 19	19		
+recipe	Tropical Static 20	20		
+recipe	Molasses Ember 21	21		
+recipe	Night Market 22	22		
+recipe	Coarse Harbor 23	23		
+recipe	Boulder Bloom 24	24		
+recipe	18g Recipe	18		
+sample	18g Recipe		25s	16
+sample	18g Recipe		35s	20
+sample	18g Recipe		42s	13
+sample	18g Recipe		37s	14
+sample	18g Recipe		31s	16
+sample	18g Recipe		34s	15
+sample	18g Recipe		29s	17
+sample	18g Recipe		26s	18
+sample	18g Recipe		23s	19
+sample	18g Recipe		21s	20
+recipe	18g Curved Demo	18		
+sample	18g Curved Demo		52s	12
+sample	18g Curved Demo		43s	13
+sample	18g Curved Demo		36s	14
+sample	18g Curved Demo		31s	15
+sample	18g Curved Demo		28s	16
+sample	18g Curved Demo		25.5s	17
+sample	18g Curved Demo		24s	18
+sample	18g Curved Demo		23s	19
