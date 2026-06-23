@@ -1052,7 +1052,7 @@ fn web_app_html() -> &'static str {
   <style>
     :root {
       color-scheme: dark;
-      --bg: #101114;
+      --bg: #0d0f12;
       --panel: #181b20;
       --panel-2: #20252c;
       --text: #f5f1e8;
@@ -1062,10 +1062,10 @@ fn web_app_html() -> &'static str {
       --goal: #a6e22e;
       --goal-bg: rgba(166, 226, 46, 0.14);
       --goal-line: rgba(166, 226, 46, 0.46);
-      --danger: #fb7185;
-      --danger-muted: #8f4a55;
-      --danger-bg: rgba(143, 74, 85, 0.14);
-      --danger-line: rgba(143, 74, 85, 0.58);
+      --danger: #ff4d6d;
+      --danger-text: #ffb3c1;
+      --danger-bg: rgba(255, 77, 109, 0.14);
+      --danger-line: rgba(255, 77, 109, 0.58);
       --shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
     }
 
@@ -1077,9 +1077,11 @@ fn web_app_html() -> &'static str {
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        linear-gradient(135deg, rgba(215, 184, 79, 0.11), transparent 34rem),
-        radial-gradient(circle at 80% 0%, rgba(215, 184, 79, 0.08), transparent 28rem),
-        var(--bg);
+        linear-gradient(180deg, rgba(255, 255, 255, 0.032), transparent 9rem),
+        linear-gradient(115deg, rgba(215, 184, 79, 0.048), rgba(215, 184, 79, 0.016) 28rem, transparent 44rem),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 80px),
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.01) 0 1px, transparent 1px 80px),
+        linear-gradient(180deg, #15171b 0%, #0f1114 54%, #0b0c0f 100%);
     }
 
     button, input, select {
@@ -1241,6 +1243,11 @@ fn web_app_html() -> &'static str {
       outline: none;
     }
 
+    select {
+      padding-right: 42px;
+      background-clip: padding-box;
+    }
+
     input:focus, select:focus {
       border-color: var(--add);
       box-shadow: 0 0 0 3px rgba(215, 184, 79, 0.18);
@@ -1370,13 +1377,13 @@ fn web_app_html() -> &'static str {
 
     .icon-button.danger:hover,
     .icon-button.danger:focus {
-      color: #fecdd3;
-      border-color: rgba(251, 113, 133, 0.72);
-      background: rgba(251, 113, 133, 0.12);
+      color: #ffd6df;
+      border-color: rgba(255, 77, 109, 0.78);
+      background: rgba(255, 77, 109, 0.18);
     }
 
     .icon-button.danger {
-      color: #f0a8b0;
+      color: var(--danger-text);
       border-color: var(--danger-line);
       background: var(--danger-bg);
     }
@@ -1542,6 +1549,10 @@ fn web_app_html() -> &'static str {
       border-color: rgba(166, 226, 46, 0.28);
       background: rgba(166, 226, 46, 0.045);
       color: rgba(217, 249, 157, 0.78);
+    }
+
+    .shot-meter.is-hidden {
+      display: none;
     }
 
     .shot-notches {
@@ -1731,7 +1742,7 @@ fn web_app_html() -> &'static str {
     }
 
     .toast.is-visible { display: block; }
-    .toast.is-error { border-color: rgba(251, 113, 133, 0.65); color: #fecdd3; }
+    .toast.is-error { border-color: rgba(255, 77, 109, 0.68); color: #ffd6df; }
 
     @media (max-width: 820px) {
       .app { padding-inline: 12px; }
@@ -2050,7 +2061,7 @@ fn web_app_html() -> &'static str {
         els.predictionBox.dataset.predictedGrind = "";
         els.predictionBox.classList.remove("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
-        els.graphWrap.innerHTML = `<div class="empty">${prediction ? "--" : "Create a recipe to begin."}</div>`;
+        els.graphWrap.innerHTML = `<div class="empty">--</div>`;
       }
 
       renderSamples(recipe);
@@ -2062,6 +2073,7 @@ fn web_app_html() -> &'static str {
       const label = count === 1 ? "1 shot" : `${count} shots`;
       els.shotMeterText.textContent = label;
       els.shotMeter.setAttribute("aria-label", `${label} logged`);
+      els.shotMeter.classList.toggle("is-hidden", !recipe);
       els.shotMeter.classList.toggle("is-empty", count === 0);
       els.shotMeter.querySelectorAll(".shot-notch").forEach((notch, index) => {
         notch.classList.toggle("is-filled", index < filled);

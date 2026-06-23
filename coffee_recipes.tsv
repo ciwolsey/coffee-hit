@@ -1,2 +1,5 @@
 record_type	recipe	dose_weight_g	shot_weight_g	time	grind
 recipe	Test	1	2		
+sample	Test			1s	2
+sample	Test			5s	6
+sample	Test			60s	6
