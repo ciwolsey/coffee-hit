@@ -1652,12 +1652,21 @@ fn web_app_html() -> &'static str {
 
     dialog.modal {
       width: min(440px, calc(100vw - 24px));
+      max-height: calc(100dvh - max(44px, env(safe-area-inset-top)) - 16px);
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
       color: var(--text);
       padding: 0;
       box-shadow: var(--shadow);
+      overflow: auto;
+      position: fixed;
+      top: max(44px, env(safe-area-inset-top));
+      bottom: auto;
+      left: 50%;
+      right: auto;
+      transform: translateX(-50%);
+      margin: 0;
     }
 
     dialog.modal::backdrop {
@@ -1695,20 +1704,13 @@ fn web_app_html() -> &'static str {
     .graph-wrap .empty {
       min-height: 380px;
       display: grid;
-      justify-items: center;
-      align-items: start;
+      place-items: center;
       padding: 0 18px;
-      padding-top: min(30%, 150px);
-      color: rgba(170, 164, 154, 0.72);
-      font-size: 0.9rem;
-    }
-
-    .graph-wrap .empty::before {
-      content: "";
-      width: min(220px, 58%);
-      height: 1px;
-      margin-bottom: 18px;
-      background: linear-gradient(90deg, transparent, rgba(166, 226, 46, 0.18), transparent);
+      color: rgba(170, 164, 154, 0.34);
+      font-size: 3rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-shadow: 0 0 18px rgba(170, 164, 154, 0.035);
     }
 
     .toast {
@@ -1782,6 +1784,11 @@ fn web_app_html() -> &'static str {
       .button, input, select {
         min-height: 54px;
       }
+      dialog.modal {
+        width: min(440px, calc(100vw - 20px));
+        top: max(36px, env(safe-area-inset-top));
+        max-height: calc(100dvh - max(36px, env(safe-area-inset-top)) - 12px);
+      }
     }
   </style>
 </head>
@@ -1801,8 +1808,10 @@ fn web_app_html() -> &'static str {
             <div class="recipe-actions">
               <button class="button goal-action" id="toggleRecipeButton" type="button">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M12 5v14"/>
-                  <path d="M5 12h14"/>
+                  <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                  <path d="M9 14h6"/>
+                  <path d="M12 11v6"/>
                 </svg>
                 <span>New Recipe</span>
               </button>
@@ -1828,9 +1837,9 @@ fn web_app_html() -> &'static str {
             <div class="field inline-setting">
               <label for="targetTime">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="13" r="8"/>
-                  <path d="M12 9v4l2 2"/>
-                  <path d="M9 2h6"/>
+                  <line x1="10" x2="14" y1="2" y2="2"/>
+                  <line x1="12" x2="15" y1="14" y2="11"/>
+                  <circle cx="12" cy="14" r="8"/>
                 </svg>
                 <span>Target</span>
               </label>
@@ -1848,8 +1857,10 @@ fn web_app_html() -> &'static str {
             <div class="shot-actions">
               <button class="button sample-action" id="openSampleButton" type="button">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M12 5v14"/>
-                  <path d="M5 12h14"/>
+                  <path d="M6 2v2"/>
+                  <path d="M10 2v2"/>
+                  <path d="M14 2v2"/>
+                  <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/>
                 </svg>
                 <span>Add Shot</span>
               </button>
@@ -1875,14 +1886,16 @@ fn web_app_html() -> &'static str {
             </div>
             <button class="icon-button refresh" id="refreshButton" type="button" aria-label="Refresh graph">
               <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
-                <path d="M21 3v6h-6"/>
+                <path d="M3 12a9 9 0 0 1 15.74-5.74L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-15.74 5.74L3 16"/>
+                <path d="M3 21v-5h5"/>
               </svg>
             </button>
           </div>
         </div>
         <div class="graph-wrap" id="graphWrap">
-          <div class="empty">Log two shots with different grinds to unlock prediction.</div>
+          <div class="empty">--</div>
         </div>
         <div class="samples">
           <div class="meta" id="sampleMeta"></div>
@@ -1918,8 +1931,10 @@ fn web_app_html() -> &'static str {
       </div>
       <button class="button goal-action" type="submit">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 5v14"/>
-          <path d="M5 12h14"/>
+          <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <path d="M9 14h6"/>
+          <path d="M12 11v6"/>
         </svg>
         <span>Create Recipe</span>
       </button>
@@ -1946,8 +1961,10 @@ fn web_app_html() -> &'static str {
       </div>
       <button class="button sample-action" type="submit">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 5v14"/>
-          <path d="M5 12h14"/>
+          <path d="M6 2v2"/>
+          <path d="M10 2v2"/>
+          <path d="M14 2v2"/>
+          <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/>
         </svg>
         <span>Add Shot</span>
       </button>
@@ -2033,7 +2050,7 @@ fn web_app_html() -> &'static str {
         els.predictionBox.dataset.predictedGrind = "";
         els.predictionBox.classList.remove("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
-        els.graphWrap.innerHTML = `<div class="empty">${prediction ? prediction.note : "Create a recipe to begin."}</div>`;
+        els.graphWrap.innerHTML = `<div class="empty">${prediction ? "--" : "Create a recipe to begin."}</div>`;
       }
 
       renderSamples(recipe);
@@ -2061,7 +2078,7 @@ fn web_app_html() -> &'static str {
       for (const sample of [...recipe.samples].reverse()) {
         const row = document.createElement("div");
         row.className = "sample";
-        row.innerHTML = `<div class="sample-values"><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>${escapeHtml(sample.time)}</span><span class="metric-label">time</span></span><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0"/><path d="M12 14l4-4"/><path d="M6.5 18h11"/></svg><span>${escapeHtml(sample.grind)}</span><span class="metric-label">grind</span></span></div><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
+        row.innerHTML = `<div class="sample-values"><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>${escapeHtml(sample.time)}</span><span class="metric-label">time</span></span><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/></svg><span>${escapeHtml(sample.grind)}</span><span class="metric-label">grind</span></span></div><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
         els.sampleList.append(row);
       }
     }
