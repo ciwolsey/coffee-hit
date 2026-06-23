@@ -935,11 +935,20 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
         json.push_str(",\"note\":null");
     } else {
         json.push_str(",\"grind\":null,\"r_squared\":null,\"model\":null,\"graph_svg\":null");
-        json.push_str(",\"note\":\"Need 2 grind samples.\"");
+        json.push_str(",\"note\":");
+        json_string_into(&mut json, &prediction_note(&points));
     }
 
     json.push('}');
     json
+}
+
+fn prediction_note(points: &[(f64, f64)]) -> String {
+    match points.len() {
+        0 => "Log two shots with different grinds to unlock prediction.".to_string(),
+        1 => "Log one more shot at a different grind to unlock prediction.".to_string(),
+        _ => "Use different grind settings to unlock prediction.".to_string(),
+    }
 }
 
 fn nearest_sample(recipe: &Recipe, target_seconds: f64) -> Option<(&Sample, f64)> {
@@ -1049,9 +1058,14 @@ fn web_app_html() -> &'static str {
       --text: #f5f1e8;
       --muted: #aaa49a;
       --line: #343a42;
-      --accent: #6ee7b7;
-      --accent-2: #f59e0b;
+      --add: #d7b84f;
+      --goal: #a6e22e;
+      --goal-bg: rgba(166, 226, 46, 0.14);
+      --goal-line: rgba(166, 226, 46, 0.46);
       --danger: #fb7185;
+      --danger-muted: #8f4a55;
+      --danger-bg: rgba(143, 74, 85, 0.14);
+      --danger-line: rgba(143, 74, 85, 0.58);
       --shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
     }
 
@@ -1063,8 +1077,8 @@ fn web_app_html() -> &'static str {
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        linear-gradient(135deg, rgba(110, 231, 183, 0.11), transparent 34rem),
-        radial-gradient(circle at 80% 0%, rgba(245, 158, 11, 0.12), transparent 28rem),
+        linear-gradient(135deg, rgba(215, 184, 79, 0.11), transparent 34rem),
+        radial-gradient(circle at 80% 0%, rgba(215, 184, 79, 0.08), transparent 28rem),
         var(--bg);
     }
 
@@ -1103,32 +1117,45 @@ fn web_app_html() -> &'static str {
       position: sticky;
       top: 14px;
       display: grid;
-      gap: 0;
+      gap: 10px;
       padding: 0;
-      overflow: hidden;
+      overflow: visible;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
     }
 
     .control-section {
       display: grid;
       gap: 14px;
-      padding: 15px;
+      padding: 0;
+      background: color-mix(in srgb, var(--panel) 94%, black);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
     .control-section + .control-section {
-      border-top: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.018);
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0.018)),
+        color-mix(in srgb, var(--panel) 94%, black);
     }
 
     .section-title {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
+      min-height: 64px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.026);
     }
 
     .section-title h2 {
       margin: 0;
-      font-size: 0.95rem;
+      font-size: 1.05rem;
       line-height: 1.15;
       letter-spacing: 0;
     }
@@ -1138,31 +1165,62 @@ fn web_app_html() -> &'static str {
       font-size: 0.82rem;
     }
 
+    .section-body {
+      display: grid;
+      gap: 14px;
+      padding: 15px;
+    }
+
     .field {
       display: grid;
       gap: 7px;
     }
 
-    .fixed-value {
-      display: grid;
-      align-content: center;
+    .field.inline-setting {
+      grid-template-columns: auto minmax(7rem, 1fr);
+      align-items: center;
+      gap: 12px;
       min-height: 50px;
-      border: 1px solid rgba(52, 58, 66, 0.72);
+      border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.035);
-      padding: 10px 13px;
+      background:
+        linear-gradient(90deg, rgba(166, 226, 46, 0.035), transparent 42%),
+        var(--panel-2);
+      padding: 0 12px 0 13px;
     }
 
-    .fixed-value strong {
-      font-size: 1.25rem;
-      line-height: 1;
-      letter-spacing: 0;
+    .field.inline-setting label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      font-size: 0.98rem;
+      font-weight: 900;
+      color: #c9c5b9;
     }
 
-    .fixed-value span {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 0.76rem;
+    .field.inline-setting label svg {
+      width: 20px;
+      height: 20px;
+      color: #d9d6cc;
+      stroke: currentColor;
+      flex: 0 0 auto;
+    }
+
+    .field.inline-setting input {
+      min-height: 38px;
+      border-color: transparent;
+      background: transparent;
+      text-align: right;
+      font-size: 2rem;
+      font-weight: 500;
+      color: #f8fafc;
+      padding-right: 0;
+    }
+
+    .field.inline-setting input:focus {
+      border-color: var(--goal);
+      box-shadow: 0 0 0 3px var(--goal-bg);
     }
 
     label {
@@ -1184,8 +1242,8 @@ fn web_app_html() -> &'static str {
     }
 
     input:focus, select:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(110, 231, 183, 0.16);
+      border-color: var(--add);
+      box-shadow: 0 0 0 3px rgba(215, 184, 79, 0.18);
     }
 
     .row {
@@ -1202,12 +1260,14 @@ fn web_app_html() -> &'static str {
       min-height: 50px;
       border: 0;
       border-radius: 8px;
-      background: var(--accent);
+      background: var(--add);
       color: #102018;
       font-weight: 800;
       padding: 0 16px;
       cursor: pointer;
       touch-action: manipulation;
+      position: relative;
+      overflow: hidden;
     }
 
     .button svg {
@@ -1229,9 +1289,58 @@ fn web_app_html() -> &'static str {
       font-size: 0.88rem;
     }
 
+    .button.goal-action,
     .button.sample-action {
-      background: var(--accent-2);
-      color: #251404;
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.09), rgba(166, 226, 46, 0.08) 42%, rgba(166, 226, 46, 0.16)),
+        rgba(18, 28, 18, 0.92);
+      color: #eaffb7;
+      border: 1px solid rgba(166, 226, 46, 0.72);
+      box-shadow:
+        inset 0 1px 0 rgba(234, 255, 183, 0.16),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+        0 9px 20px rgba(0, 0, 0, 0.26);
+    }
+
+    .button.goal-action::after,
+    .button.sample-action::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-135%);
+      background: linear-gradient(
+        110deg,
+        transparent 0%,
+        transparent 36%,
+        rgba(217, 249, 157, 0.06) 45%,
+        rgba(217, 249, 157, 0.18) 50%,
+        rgba(217, 249, 157, 0.06) 55%,
+        transparent 64%,
+        transparent 100%
+      );
+      pointer-events: none;
+      animation: button-shimmer 7.5s ease-in-out infinite;
+    }
+
+    .button.goal-action > *,
+    .button.sample-action > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .button.goal-action:hover,
+    .button.goal-action:focus,
+    .button.sample-action:hover,
+    .button.sample-action:focus {
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.14), rgba(166, 226, 46, 0.14) 42%, rgba(166, 226, 46, 0.22)),
+        rgba(22, 35, 20, 0.96);
+      border-color: rgba(166, 226, 46, 0.86);
+      box-shadow:
+        inset 0 1px 0 rgba(234, 255, 183, 0.22),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+        0 0 0 3px var(--goal-bg),
+        0 10px 22px rgba(0, 0, 0, 0.24);
     }
 
     .icon-button {
@@ -1248,8 +1357,9 @@ fn web_app_html() -> &'static str {
     }
 
     .icon-button.recipe-delete {
-      width: 50px;
-      height: 50px;
+      width: 100%;
+      height: auto;
+      min-height: 50px;
     }
 
     .icon-button svg {
@@ -1265,6 +1375,26 @@ fn web_app_html() -> &'static str {
       background: rgba(251, 113, 133, 0.12);
     }
 
+    .icon-button.danger {
+      color: #f0a8b0;
+      border-color: var(--danger-line);
+      background: var(--danger-bg);
+    }
+
+    .icon-button.refresh {
+      color: #d9f99d;
+      border-color: rgba(166, 226, 46, 0.45);
+      background: rgba(72, 104, 31, 0.45);
+    }
+
+    .icon-button.refresh:hover,
+    .icon-button.refresh:focus {
+      color: #f0ffd0;
+      border-color: rgba(166, 226, 46, 0.72);
+      background: rgba(91, 133, 37, 0.58);
+      box-shadow: 0 0 0 3px var(--goal-bg);
+    }
+
     .icon-button:disabled {
       opacity: 0.45;
       cursor: not-allowed;
@@ -1272,18 +1402,47 @@ fn web_app_html() -> &'static str {
 
     .button:active { transform: translateY(1px); }
 
+    @keyframes button-shimmer {
+      0%, 68% {
+        transform: translateX(-135%);
+      }
+      82%, 100% {
+        transform: translateX(135%);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .button.goal-action::after,
+      .button.sample-action::after {
+        animation: none;
+        display: none;
+      }
+    }
+
     .row > .button {
       align-self: end;
     }
 
+    .modal-form > .button,
     #sampleForm > .button {
       grid-column: 1 / -1;
     }
 
     .recipe-actions {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 3fr 1fr;
       gap: 10px;
+      align-items: stretch;
+    }
+
+    .recipe-actions > .button,
+    .recipe-actions > .icon-button {
+      height: 100%;
+    }
+
+    .shot-actions {
+      display: grid;
+      margin-top: 4px;
     }
 
     .prediction {
@@ -1292,8 +1451,8 @@ fn web_app_html() -> &'static str {
       gap: 12px;
       align-items: end;
       padding: 16px;
-      background: linear-gradient(135deg, #25342d, #191f20);
-      border: 1px solid rgba(110, 231, 183, 0.32);
+      background: linear-gradient(135deg, rgba(166, 226, 46, 0.14), #191f20);
+      border: 1px solid var(--goal-line);
       border-radius: 8px;
       cursor: default;
     }
@@ -1304,8 +1463,8 @@ fn web_app_html() -> &'static str {
 
     .prediction.is-actionable:hover,
     .prediction.is-actionable:focus-within {
-      border-color: rgba(245, 158, 11, 0.72);
-      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+      border-color: rgba(166, 226, 46, 0.72);
+      box-shadow: 0 0 0 3px var(--goal-bg);
     }
 
     .prediction .label {
@@ -1324,7 +1483,7 @@ fn web_app_html() -> &'static str {
     }
 
     .prediction .target {
-      color: var(--accent-2);
+      color: var(--goal);
       font-weight: 800;
       text-align: right;
       white-space: nowrap;
@@ -1340,15 +1499,18 @@ fn web_app_html() -> &'static str {
     .graph-head {
       display: flex;
       justify-content: space-between;
-      gap: 12px;
+      gap: 18px;
       align-items: center;
-      padding: 14px 16px;
+      min-height: 64px;
+      padding: 0 16px 0 18px;
       border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.026);
     }
 
     .graph-head h2 {
       margin: 0;
-      font-size: 1rem;
+      font-size: 1.05rem;
+      font-weight: 800;
       letter-spacing: 0;
     }
 
@@ -1356,15 +1518,65 @@ fn web_app_html() -> &'static str {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 10px;
+      gap: 14px;
       text-align: right;
+    }
+
+    .shot-meter {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--goal-line);
+      border-radius: 8px;
+      background: rgba(166, 226, 46, 0.08);
+      color: #d9f99d;
+      font-size: 0.92rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .shot-meter.is-empty {
+      border-color: rgba(166, 226, 46, 0.28);
+      background: rgba(166, 226, 46, 0.045);
+      color: rgba(217, 249, 157, 0.78);
+    }
+
+    .shot-notches {
+      display: grid;
+      grid-template-columns: repeat(6, 12px);
+      gap: 4px;
+      align-items: end;
+      height: 18px;
+    }
+
+    .shot-notch {
+      width: 12px;
+      height: 8px;
+      border-radius: 2px;
+      background: rgba(166, 226, 46, 0.08);
+      border: 1px solid rgba(166, 226, 46, 0.14);
+    }
+
+    .shot-notch:nth-child(2) { height: 10px; }
+    .shot-notch:nth-child(3) { height: 12px; }
+    .shot-notch:nth-child(4) { height: 14px; }
+    .shot-notch:nth-child(5) { height: 16px; }
+    .shot-notch:nth-child(6) { height: 18px; }
+
+    .shot-notch.is-filled {
+      background: var(--goal);
+      border-color: rgba(166, 226, 46, 0.78);
+      box-shadow: 0 0 10px rgba(166, 226, 46, 0.22);
     }
 
     .graph-wrap {
       min-height: 280px;
       padding: 10px;
       overflow-x: auto;
-      background: #111827;
+      background: #15181d;
       display: grid;
       align-items: stretch;
     }
@@ -1394,7 +1606,7 @@ fn web_app_html() -> &'static str {
 
     .sample {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       gap: 10px;
       min-height: 44px;
@@ -1404,23 +1616,99 @@ fn web_app_html() -> &'static str {
       border-radius: 8px;
     }
 
-    .sample strong { font-size: 1rem; }
-    .sample span { color: var(--muted); }
-
-    .new-recipe {
-      display: none;
-      gap: 10px;
-      padding-top: 2px;
+    .sample-values {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      min-width: 0;
     }
 
-    .new-recipe.is-open {
+    .sample-metric {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--text);
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .sample-metric svg {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      color: #f8fafc;
+      stroke: currentColor;
+    }
+
+    .sample-metric .metric-label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    dialog.modal {
+      width: min(440px, calc(100vw - 24px));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0;
+      box-shadow: var(--shadow);
+    }
+
+    dialog.modal::backdrop {
+      background: rgba(0, 0, 0, 0.58);
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-head h2 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .modal-form {
       display: grid;
+      gap: 14px;
+      padding: 16px;
     }
 
     .empty, .status {
       color: var(--muted);
       padding: 22px;
       text-align: center;
+    }
+
+    .graph-wrap .empty {
+      min-height: 380px;
+      display: grid;
+      justify-items: center;
+      align-items: start;
+      padding: 0 18px;
+      padding-top: min(30%, 150px);
+      color: rgba(170, 164, 154, 0.72);
+      font-size: 0.9rem;
+    }
+
+    .graph-wrap .empty::before {
+      content: "";
+      width: min(220px, 58%);
+      height: 1px;
+      margin-bottom: 18px;
+      background: linear-gradient(90deg, transparent, rgba(166, 226, 46, 0.18), transparent);
     }
 
     .toast {
@@ -1453,7 +1741,12 @@ fn web_app_html() -> &'static str {
         position: static;
         box-shadow: none;
       }
-      .control-section { padding: 14px 12px; }
+      .section-title { padding: 0 12px; }
+      .section-body,
+      .control-section:first-child .section-body,
+      .control-section + .control-section .section-body {
+        padding: 14px 12px;
+      }
       .prediction .grind { font-size: 2.8rem; }
       .graph-panel { min-height: 0; }
       .graph-wrap { padding: 8px 0; }
@@ -1468,6 +1761,9 @@ fn web_app_html() -> &'static str {
       .row {
         grid-template-columns: 1fr;
       }
+      .field.inline-setting {
+        grid-template-columns: auto minmax(5rem, 1fr);
+      }
       .prediction {
         grid-template-columns: 1fr;
       }
@@ -1476,6 +1772,8 @@ fn web_app_html() -> &'static str {
       }
       .graph-head {
         display: grid;
+        min-height: 0;
+        padding: 14px 16px;
       }
       .graph-meta {
         justify-content: space-between;
@@ -1484,7 +1782,6 @@ fn web_app_html() -> &'static str {
       .button, input, select {
         min-height: 54px;
       }
-      .fixed-value { min-height: 54px; }
     }
   </style>
 </head>
@@ -1495,110 +1792,69 @@ fn web_app_html() -> &'static str {
         <section class="control-section">
           <div class="section-title">
             <h2>Recipe</h2>
-            <span id="recipeMeta">0 samples</span>
           </div>
-          <div class="field">
-            <label for="recipeSelect">Recipe</label>
-            <select id="recipeSelect"></select>
-          </div>
-
-          <div class="row">
+          <div class="section-body">
             <div class="field">
-              <label>Dose</label>
-              <div class="fixed-value" aria-live="polite">
-                <strong id="doseDisplay">--</strong>
-                <span>Fixed for recipe</span>
-              </div>
+              <select id="recipeSelect" aria-label="Recipe"></select>
             </div>
-            <div class="field">
-              <label>Shot weight</label>
-              <div class="fixed-value" aria-live="polite">
-                <strong id="shotWeightDisplay">--</strong>
-                <span>Fixed for recipe</span>
-              </div>
+
+            <div class="recipe-actions">
+              <button class="button goal-action" id="toggleRecipeButton" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14"/>
+                  <path d="M5 12h14"/>
+                </svg>
+                <span>New Recipe</span>
+              </button>
+              <button class="icon-button danger recipe-delete" id="deleteRecipeButton" type="button" aria-label="Delete recipe">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 6h18"/>
+                  <path d="M8 6V4h8v2"/>
+                  <path d="M19 6l-1 14H6L5 6"/>
+                  <path d="M10 11v5"/>
+                  <path d="M14 11v5"/>
+                </svg>
+              </button>
             </div>
           </div>
-
-          <div class="recipe-actions">
-            <button class="button secondary" id="toggleRecipeButton" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 5v14"/>
-                <path d="M5 12h14"/>
-              </svg>
-              <span>New Recipe</span>
-            </button>
-            <button class="icon-button danger recipe-delete" id="deleteRecipeButton" type="button" aria-label="Delete recipe">
-              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M3 6h18"/>
-                <path d="M8 6V4h8v2"/>
-                <path d="M19 6l-1 14H6L5 6"/>
-                <path d="M10 11v5"/>
-                <path d="M14 11v5"/>
-              </svg>
-            </button>
-          </div>
-
-          <form id="recipeForm" class="new-recipe">
-            <div class="field">
-              <label for="recipeName">Recipe name</label>
-              <input id="recipeName" name="recipe" autocomplete="off" required>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label for="recipeDose">Dose grams</label>
-                <input id="recipeDose" name="dose" inputmode="decimal" autocomplete="off" required>
-              </div>
-              <div class="field">
-                <label for="recipeShotWeight">Shot grams</label>
-                <input id="recipeShotWeight" name="shot_weight" inputmode="decimal" autocomplete="off" required>
-              </div>
-            </div>
-            <button class="button" type="submit">
-              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 5v14"/>
-                <path d="M5 12h14"/>
-              </svg>
-              <span>Create Recipe</span>
-            </button>
-          </form>
         </section>
 
         <section class="control-section">
           <div class="section-title">
             <h2>Shot</h2>
-            <span id="nearestMeta">No nearest sample</span>
           </div>
 
-          <div class="field">
-            <label for="targetTime">Target time</label>
-            <input id="targetTime" inputmode="decimal" value="30" autocomplete="off">
-          </div>
+          <div class="section-body">
+            <div class="field inline-setting">
+              <label for="targetTime">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="13" r="8"/>
+                  <path d="M12 9v4l2 2"/>
+                  <path d="M9 2h6"/>
+                </svg>
+                <span>Target</span>
+              </label>
+              <input id="targetTime" inputmode="decimal" value="30" autocomplete="off">
+            </div>
 
-          <div class="prediction" id="predictionBox">
-            <div>
-              <div class="label">Next grind</div>
-              <div class="grind" id="predictedGrind">--</div>
+            <div class="prediction" id="predictionBox">
+              <div>
+                <div class="label">Next grind</div>
+                <div class="grind" id="predictedGrind">--</div>
+              </div>
+              <div class="target" id="targetMeta">30s</div>
             </div>
-            <div class="target" id="targetMeta">30s</div>
-          </div>
 
-          <form id="sampleForm" class="row">
-            <div class="field">
-              <label for="shotTime">Shot time</label>
-              <input id="shotTime" name="time" inputmode="decimal" autocomplete="off" required>
+            <div class="shot-actions">
+              <button class="button sample-action" id="openSampleButton" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14"/>
+                  <path d="M5 12h14"/>
+                </svg>
+                <span>Add Shot</span>
+              </button>
             </div>
-            <div class="field">
-              <label for="grind">Grind</label>
-              <input id="grind" name="grind" inputmode="decimal" autocomplete="off" required>
-            </div>
-            <button class="button sample-action" type="submit">
-              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 5v14"/>
-                <path d="M5 12h14"/>
-              </svg>
-              <span>Add Sample</span>
-            </button>
-          </form>
+          </div>
         </section>
       </div>
 
@@ -1606,12 +1862,27 @@ fn web_app_html() -> &'static str {
         <div class="graph-head">
           <h2 id="graphTitle">Shot graph</h2>
           <div class="graph-meta">
-            <span class="meta" id="modelMeta"></span>
-            <button class="button secondary compact" id="refreshButton" type="button">Refresh</button>
+            <div class="shot-meter" id="shotMeter" aria-label="No shots logged">
+              <span class="shot-notches" aria-hidden="true">
+                <span class="shot-notch"></span>
+                <span class="shot-notch"></span>
+                <span class="shot-notch"></span>
+                <span class="shot-notch"></span>
+                <span class="shot-notch"></span>
+                <span class="shot-notch"></span>
+              </span>
+              <span id="shotMeterText">0 shots</span>
+            </div>
+            <button class="icon-button refresh" id="refreshButton" type="button" aria-label="Refresh graph">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                <path d="M21 3v6h-6"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div class="graph-wrap" id="graphWrap">
-          <div class="empty">Need 2 grind samples.</div>
+          <div class="empty">Log two shots with different grinds to unlock prediction.</div>
         </div>
         <div class="samples">
           <div class="meta" id="sampleMeta"></div>
@@ -1620,6 +1891,68 @@ fn web_app_html() -> &'static str {
       </div>
     </section>
   </main>
+  <dialog class="modal" id="recipeDialog">
+    <div class="modal-head">
+      <h2>New Recipe</h2>
+      <button class="icon-button" type="button" data-close-dialog="recipeDialog" aria-label="Close recipe dialog">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6L6 18"/>
+          <path d="M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <form id="recipeForm" class="modal-form" method="dialog">
+      <div class="field">
+        <label for="recipeName">Recipe name</label>
+        <input id="recipeName" name="recipe" autocomplete="off" required>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="recipeDose">Dose grams</label>
+          <input id="recipeDose" name="dose" inputmode="decimal" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="recipeShotWeight">Shot grams</label>
+          <input id="recipeShotWeight" name="shot_weight" inputmode="decimal" autocomplete="off" required>
+        </div>
+      </div>
+      <button class="button goal-action" type="submit">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14"/>
+          <path d="M5 12h14"/>
+        </svg>
+        <span>Create Recipe</span>
+      </button>
+    </form>
+  </dialog>
+  <dialog class="modal" id="sampleDialog">
+    <div class="modal-head">
+      <h2>Add Shot</h2>
+      <button class="icon-button" type="button" data-close-dialog="sampleDialog" aria-label="Close shot dialog">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6L6 18"/>
+          <path d="M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <form id="sampleForm" class="modal-form" method="dialog">
+      <div class="field">
+        <label for="shotTime">Shot time</label>
+        <input id="shotTime" name="time" inputmode="decimal" autocomplete="off" required>
+      </div>
+      <div class="field">
+        <label for="grind">Grind</label>
+        <input id="grind" name="grind" inputmode="decimal" autocomplete="off" required>
+      </div>
+      <button class="button sample-action" type="submit">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14"/>
+          <path d="M5 12h14"/>
+        </svg>
+        <span>Add Shot</span>
+      </button>
+    </form>
+  </dialog>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -1628,8 +1961,6 @@ fn web_app_html() -> &'static str {
     const els = {
       recipeSelect: document.querySelector("#recipeSelect"),
       targetTime: document.querySelector("#targetTime"),
-      doseDisplay: document.querySelector("#doseDisplay"),
-      shotWeightDisplay: document.querySelector("#shotWeightDisplay"),
       predictedGrind: document.querySelector("#predictedGrind"),
       predictionBox: document.querySelector("#predictionBox"),
       targetMeta: document.querySelector("#targetMeta"),
@@ -1637,13 +1968,15 @@ fn web_app_html() -> &'static str {
       grind: document.querySelector("#grind"),
       graphWrap: document.querySelector("#graphWrap"),
       graphTitle: document.querySelector("#graphTitle"),
-      modelMeta: document.querySelector("#modelMeta"),
       sampleMeta: document.querySelector("#sampleMeta"),
       sampleList: document.querySelector("#sampleList"),
       sampleForm: document.querySelector("#sampleForm"),
       recipeForm: document.querySelector("#recipeForm"),
-      recipeMeta: document.querySelector("#recipeMeta"),
-      nearestMeta: document.querySelector("#nearestMeta"),
+      sampleDialog: document.querySelector("#sampleDialog"),
+      recipeDialog: document.querySelector("#recipeDialog"),
+      openSampleButton: document.querySelector("#openSampleButton"),
+      shotMeter: document.querySelector("#shotMeter"),
+      shotMeterText: document.querySelector("#shotMeterText"),
       deleteRecipeButton: document.querySelector("#deleteRecipeButton"),
       toast: document.querySelector("#toast")
     };
@@ -1676,52 +2009,59 @@ fn web_app_html() -> &'static str {
       for (const recipe of data.recipes) {
         const option = document.createElement("option");
         option.value = recipe.name;
-        option.textContent = recipe.name;
+        option.textContent = `${recipe.name}, Dose: ${grams(recipe.dose_weight_g)}, Out: ${grams(recipe.shot_weight_g)}`;
         option.selected = recipe.name === state.selectedRecipe;
         els.recipeSelect.append(option);
       }
 
       const recipe = data.recipes.find(item => item.name === state.selectedRecipe);
-      els.targetTime.value = data.target_time;
-      els.doseDisplay.textContent = recipe ? `${recipe.dose_weight_g}g` : "--";
-      els.shotWeightDisplay.textContent = recipe && recipe.shot_weight_g ? `${recipe.shot_weight_g}g` : "--";
+      els.targetTime.value = Math.round(Number(data.target_time));
       els.graphTitle.textContent = recipe ? recipe.name : "Shot graph";
-      els.recipeMeta.textContent = recipe ? `${recipe.sample_count} samples` : "No recipe";
+      renderShotMeter(recipe);
       els.deleteRecipeButton.disabled = !recipe;
+      els.openSampleButton.disabled = !recipe;
 
       const prediction = data.prediction;
       if (prediction && prediction.grind !== null) {
         els.predictedGrind.textContent = Number(prediction.grind).toFixed(2);
         els.predictionBox.dataset.predictedGrind = Number(prediction.grind).toFixed(2);
         els.predictionBox.classList.add("is-actionable");
-        els.targetMeta.textContent = `${Number(prediction.target_seconds).toFixed(2)}s target`;
-        els.modelMeta.textContent = `${prediction.model_sample_count} model samples, R2 ${Number(prediction.r_squared).toFixed(2)}`;
+        els.targetMeta.textContent = `${Math.round(Number(prediction.target_seconds))}s target`;
         els.graphWrap.innerHTML = prediction.graph_svg;
-        els.nearestMeta.textContent = prediction.nearest ? `nearest ${prediction.nearest.time} at ${prediction.nearest.grind}` : "No nearest sample";
       } else {
         els.predictedGrind.textContent = "--";
         els.predictionBox.dataset.predictedGrind = "";
         els.predictionBox.classList.remove("is-actionable");
-        els.targetMeta.textContent = `${Number(data.target_time).toFixed(2)}s target`;
-        els.modelMeta.textContent = "";
+        els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
         els.graphWrap.innerHTML = `<div class="empty">${prediction ? prediction.note : "Create a recipe to begin."}</div>`;
-        els.nearestMeta.textContent = prediction && prediction.nearest ? `nearest ${prediction.nearest.time} at ${prediction.nearest.grind}` : "No nearest sample";
       }
 
       renderSamples(recipe);
     }
 
+    function renderShotMeter(recipe) {
+      const count = recipe ? Number(recipe.sample_count) : 0;
+      const filled = Math.min(count, 6);
+      const label = count === 1 ? "1 shot" : `${count} shots`;
+      els.shotMeterText.textContent = label;
+      els.shotMeter.setAttribute("aria-label", `${label} logged`);
+      els.shotMeter.classList.toggle("is-empty", count === 0);
+      els.shotMeter.querySelectorAll(".shot-notch").forEach((notch, index) => {
+        notch.classList.toggle("is-filled", index < filled);
+      });
+    }
+
     function renderSamples(recipe) {
       els.sampleList.innerHTML = "";
       if (!recipe) {
-        els.sampleMeta.textContent = "No recipe selected";
+        els.sampleMeta.textContent = "";
         return;
       }
-      els.sampleMeta.textContent = `${recipe.sample_count} samples`;
+      els.sampleMeta.textContent = "";
       for (const sample of [...recipe.samples].reverse()) {
         const row = document.createElement("div");
         row.className = "sample";
-        row.innerHTML = `<strong>${escapeHtml(sample.time)}</strong><span>grind ${escapeHtml(sample.grind)}</span><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
+        row.innerHTML = `<div class="sample-values"><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>${escapeHtml(sample.time)}</span><span class="metric-label">time</span></span><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0"/><path d="M12 14l4-4"/><path d="M6.5 18h11"/></svg><span>${escapeHtml(sample.grind)}</span><span class="metric-label">grind</span></span></div><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
         els.sampleList.append(row);
       }
     }
@@ -1736,6 +2076,11 @@ fn web_app_html() -> &'static str {
       }[character]));
     }
 
+    function grams(value) {
+      const text = String(value || "").trim();
+      return text.endsWith("g") ? text : `${text}g`;
+    }
+
     function showToast(message, isError = false) {
       els.toast.textContent = message;
       els.toast.className = `toast is-visible${isError ? " is-error" : ""}`;
@@ -1743,6 +2088,22 @@ fn web_app_html() -> &'static str {
       showToast.timeout = setTimeout(() => {
         els.toast.className = "toast";
       }, 2600);
+    }
+
+    function openDialog(dialog, focusTarget) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+      requestAnimationFrame(() => focusTarget?.focus());
+    }
+
+    function fillPredictedGrind() {
+      const predictedGrind = els.predictionBox.dataset.predictedGrind;
+      if (!predictedGrind) {
+        return false;
+      }
+      els.grind.value = predictedGrind;
+      return true;
     }
 
     els.recipeSelect.addEventListener("change", () => {
@@ -1759,20 +2120,26 @@ fn web_app_html() -> &'static str {
     });
 
     els.predictionBox.addEventListener("click", () => {
-      const predictedGrind = els.predictionBox.dataset.predictedGrind;
-      if (!predictedGrind) {
+      if (!fillPredictedGrind()) {
         return;
       }
-      els.grind.value = predictedGrind;
-      els.shotTime.focus();
+      openDialog(els.sampleDialog, els.shotTime);
       showToast("Grind filled for next shot");
     });
 
     document.querySelector("#toggleRecipeButton").addEventListener("click", () => {
-      els.recipeForm.classList.toggle("is-open");
-      if (els.recipeForm.classList.contains("is-open")) {
-        document.querySelector("#recipeName").focus();
-      }
+      openDialog(els.recipeDialog, document.querySelector("#recipeName"));
+    });
+
+    els.openSampleButton.addEventListener("click", () => {
+      fillPredictedGrind();
+      openDialog(els.sampleDialog, els.shotTime);
+    });
+
+    document.querySelectorAll("[data-close-dialog]").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelector(`#${button.dataset.closeDialog}`)?.close();
+      });
     });
 
     els.deleteRecipeButton.addEventListener("click", async () => {
@@ -1836,8 +2203,9 @@ fn web_app_html() -> &'static str {
           body
         });
         event.target.reset();
+        els.sampleDialog.close();
         render(data);
-        showToast("Sample added");
+        showToast("Shot added");
       } catch (error) {
         showToast(error.message, true);
       }
@@ -1853,7 +2221,7 @@ fn web_app_html() -> &'static str {
           body: params({ recipe: form.get("recipe"), dose: form.get("dose"), shot_weight: form.get("shot_weight") })
         });
         event.target.reset();
-        event.target.classList.remove("is-open");
+        els.recipeDialog.close();
         render(data);
         showToast("Recipe created");
       } catch (error) {
@@ -2198,11 +2566,9 @@ fn render_graph_svg(
     let predicted_x = x(predicted_grind);
     let title = svg_escape(&recipe.name);
     let subtitle = svg_escape(&format!(
-        "dose {}g - shot {}g - {} samples - local model {} samples - time = {} + {} * grind - R2 {}",
+        "dose {}g - shot {}g - time = {} + {} * grind - R2 {}",
         recipe.dose_weight_g,
         recipe.shot_weight_g,
-        points.len(),
-        model_points.len(),
         fmt(intercept),
         fmt(slope),
         fmt(model_r2)
@@ -2212,11 +2578,11 @@ fn render_graph_svg(
     svg.push_str(&format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0}" height="{height:.0}" viewBox="0 0 {width:.0} {height:.0}" role="img" aria-labelledby="title desc">
 <title id="title">Shot time vs grind for {title}</title>
-<desc id="desc">Coffee recipe graph showing recorded shot samples and Theil-Sen prediction line.</desc>
-<rect width="100%" height="100%" fill="#111827"/>
+<desc id="desc">Coffee recipe graph showing recorded shots and Theil-Sen prediction line.</desc>
+<rect width="100%" height="100%" fill="#15181d"/>
 <text x="{left:.0}" y="34" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#f8fafc">{title}</text>
 <text x="{left:.0}" y="58" font-family="Arial, sans-serif" font-size="13" fill="#94a3b8">{subtitle}</text>
-<rect x="{left:.0}" y="{top:.0}" width="{plot_width:.0}" height="{plot_height:.0}" fill="#172033" stroke="#334155"/>
+<rect x="{left:.0}" y="{top:.0}" width="{plot_width:.0}" height="{plot_height:.0}" fill="#1b2027" stroke="#343a42"/>
 <clipPath id="plot-area"><rect x="{left:.0}" y="{top:.0}" width="{plot_width:.0}" height="{plot_height:.0}"/></clipPath>
 "##
     ));
@@ -2255,15 +2621,15 @@ fn render_graph_svg(
     svg.push_str(&format!(
         r##"<g clip-path="url(#plot-area)">
 <line x1="{line_x1:.2}" y1="{line_y1:.2}" x2="{line_x2:.2}" y2="{line_y2:.2}" stroke="#60a5fa" stroke-width="3"/>
-<line x1="{left:.2}" y1="{target_y:.2}" x2="{:.2}" y2="{target_y:.2}" stroke="#f59e0b" stroke-width="2" stroke-dasharray="7 5"/>
+<line x1="{left:.2}" y1="{target_y:.2}" x2="{:.2}" y2="{target_y:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
 "##,
         left + plot_width
     ));
 
     if (x_min..=x_max).contains(&predicted_grind) {
         svg.push_str(&format!(
-            r##"<line x1="{predicted_x:.2}" y1="{top:.2}" x2="{predicted_x:.2}" y2="{:.2}" stroke="#f59e0b" stroke-width="2" stroke-dasharray="7 5"/>
-<circle cx="{predicted_x:.2}" cy="{target_y:.2}" r="6" fill="#f59e0b" stroke="#111827" stroke-width="2"/>
+            r##"<line x1="{predicted_x:.2}" y1="{top:.2}" x2="{predicted_x:.2}" y2="{:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
+<circle cx="{predicted_x:.2}" cy="{target_y:.2}" r="6" fill="#a6e22e" stroke="#15181d" stroke-width="2"/>
 "##,
             top + plot_height
         ));
