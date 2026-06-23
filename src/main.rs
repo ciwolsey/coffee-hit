@@ -2,11 +2,12 @@ use std::env;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process;
 
-const HEADER: &str = "record_type\trecipe\tdose_weight_g\ttime\tgrind\n";
+const HEADER: &str = "record_type\trecipe\tdose_weight_g\tshot_weight_g\ttime\tgrind\n";
 const LOCAL_MODEL_SAMPLE_LIMIT: usize = 6;
 
 #[derive(Debug)]
@@ -30,6 +31,7 @@ impl Error for AppError {}
 struct Recipe {
     name: String,
     dose_weight_g: String,
+    shot_weight_g: String,
     samples: Vec<Sample>,
 }
 
@@ -68,6 +70,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "sample" | "add-sample" => add_sample(&data_file, &args),
         "predict" => predict_recipe(&data_file, &args),
         "graph" => graph_recipe(&data_file, &args),
+        "serve" | "web" => serve_web(&data_file, &args),
         "remove" | "rm" => remove_recipe(&data_file, &args),
         "-h" | "--help" | "help" => {
             print_usage();
@@ -108,16 +111,18 @@ fn print_usage() {
     println!(
         "Usage:
   ./coffee.sh recipes
-  ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G
+  ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G --shot-weight SHOT_WEIGHT_G
   ./coffee.sh sample --recipe RECIPE --time SHOT_TIME --grind GRIND
   ./coffee.sh predict --recipe RECIPE --time TARGET_SHOT_TIME
   ./coffee.sh graph --recipe RECIPE --time TARGET_SHOT_TIME [--output graph.svg]
+  ./coffee.sh serve [--host HOST] [--port 9000]
   ./coffee.sh remove --recipe RECIPE
 
 Recipes are stored in coffee_recipes.tsv as:
-  record_type<TAB>recipe<TAB>dose_weight_g<TAB>time<TAB>grind
+  record_type<TAB>recipe<TAB>dose_weight_g<TAB>shot_weight_g<TAB>time<TAB>grind
 
-Rows with record_type \"recipe\" define recipes and their fixed dose in grams.
+Rows with record_type \"recipe\" define recipes and their fixed dose and shot
+weight in grams.
 Rows with record_type \"sample\" define shot samples for a recipe. Grind is a
 numeric grinder setting from 1 (finest) to 40 (very coarse)."
     );
@@ -127,10 +132,11 @@ fn print_usage_to_stderr() {
     eprintln!(
         "Usage:
   ./coffee.sh recipes
-  ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G
+  ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G --shot-weight SHOT_WEIGHT_G
   ./coffee.sh sample --recipe RECIPE --time SHOT_TIME --grind GRIND
   ./coffee.sh predict --recipe RECIPE --time TARGET_SHOT_TIME
   ./coffee.sh graph --recipe RECIPE --time TARGET_SHOT_TIME [--output graph.svg]
+  ./coffee.sh serve [--host HOST] [--port 9000]
   ./coffee.sh remove --recipe RECIPE"
     );
 }
@@ -146,6 +152,7 @@ fn list_recipes(data_file: &Path) -> Result<(), Box<dyn Error>> {
     for recipe in data.recipes {
         println!("recipe: {}", recipe.name);
         println!("dose_weight_g: {}", recipe.dose_weight_g);
+        println!("shot_weight_g: {}", recipe.shot_weight_g);
         if !recipe.samples.is_empty() {
             println!("samples:");
             for sample in recipe.samples {
@@ -163,11 +170,15 @@ fn add_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut parser = ArgParser::new(args);
     let mut recipe = None;
     let mut dose = None;
+    let mut shot_weight = None;
 
     while let Some(arg) = parser.next() {
         match arg {
             "--recipe" | "--name" => recipe = Some(parser.require_value(arg)?.to_string()),
             "--dose" => dose = Some(numeric_dose(parser.require_value(arg)?)),
+            "--shot-weight" | "--yield" => {
+                shot_weight = Some(numeric_dose(parser.require_value(arg)?))
+            }
             "-h" | "--help" => {
                 print_usage();
                 return Ok(());
@@ -183,16 +194,22 @@ fn add_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
 
     let recipe = recipe.ok_or_else(|| {
         print_usage_to_stderr();
-        AppError::new("Add requires --recipe and --dose")
+        AppError::new("Add requires --recipe, --dose, and --shot-weight")
     })?;
     let dose = dose.ok_or_else(|| {
         print_usage_to_stderr();
-        AppError::new("Add requires --recipe and --dose")
+        AppError::new("Add requires --recipe, --dose, and --shot-weight")
+    })?;
+    let shot_weight = shot_weight.ok_or_else(|| {
+        print_usage_to_stderr();
+        AppError::new("Add requires --recipe, --dose, and --shot-weight")
     })?;
 
     reject_tabs("recipe", &recipe)?;
     reject_tabs("dose", &dose)?;
+    reject_tabs("shot weight", &shot_weight)?;
     require_number("dose", &dose)?;
+    require_number("shot weight", &shot_weight)?;
 
     let mut data = load_data(data_file)?;
     if data.recipes.iter().any(|item| item.name == recipe) {
@@ -204,6 +221,7 @@ fn add_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
     data.recipes.push(Recipe {
         name: recipe.clone(),
         dose_weight_g: dose,
+        shot_weight_g: shot_weight,
         samples: Vec::new(),
     });
     save_data(data_file, &data)?;
@@ -350,6 +368,7 @@ fn predict_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error
     println!("recipe: {recipe_name}");
     println!("target_time: {}s", fmt(target_seconds));
     println!("dose_weight_g: {}", recipe.dose_weight_g);
+    println!("shot_weight_g: {}", recipe.shot_weight_g);
     println!("samples_used: {}", recipe.samples.len());
 
     let model_points = local_model_points(&grind_points, target_seconds, LOCAL_MODEL_SAMPLE_LIMIT);
@@ -450,6 +469,1405 @@ fn graph_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+fn serve_web(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut parser = ArgParser::new(args);
+    let mut host = "0.0.0.0".to_string();
+    let mut port = "9000".to_string();
+
+    while let Some(arg) = parser.next() {
+        match arg {
+            "--host" => host = parser.require_value(arg)?.to_string(),
+            "--port" => port = parser.require_value(arg)?.to_string(),
+            "-h" | "--help" => {
+                print_usage();
+                return Ok(());
+            }
+            _ => {
+                print_usage_to_stderr();
+                return Err(Box::new(AppError::new(format!(
+                    "Unknown option for serve: {arg}"
+                ))));
+            }
+        }
+    }
+
+    require_number("port", &port)?;
+    let address = format!("{host}:{port}");
+    let listener = TcpListener::bind(&address)?;
+    println!("Coffee web app listening on http://{address}");
+    println!("Open this server from your phone or tablet using this machine's LAN IP address.");
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(mut stream) => {
+                if let Err(error) = handle_http_request(&mut stream, data_file) {
+                    let body = json_error(&error.to_string());
+                    let _ = write_http_response(
+                        &mut stream,
+                        "500 Internal Server Error",
+                        "application/json; charset=utf-8",
+                        body.as_bytes(),
+                    );
+                }
+            }
+            Err(error) => eprintln!("Connection failed: {error}"),
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_http_request(stream: &mut TcpStream, data_file: &Path) -> Result<(), Box<dyn Error>> {
+    let request = read_http_request(stream)?;
+    let mut lines = request.split("\r\n");
+    let request_line = lines
+        .next()
+        .ok_or_else(|| AppError::new("Invalid HTTP request"))?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().unwrap_or("");
+    let target = request_parts.next().unwrap_or("/");
+    let body = request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+
+    match (method, path) {
+        ("GET", "/") | ("GET", "/index.html") => write_http_response(
+            stream,
+            "200 OK",
+            "text/html; charset=utf-8",
+            web_app_html().as_bytes(),
+        )?,
+        ("GET", "/api/state") => {
+            let params = parse_form_encoded(query);
+            let recipe = form_value(&params, "recipe");
+            let target_time = form_value(&params, "time")
+                .filter(|value| !value.is_empty())
+                .unwrap_or("30");
+            let json = web_state_json(data_file, recipe, target_time)?;
+            write_http_response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                json.as_bytes(),
+            )?;
+        }
+        ("POST", "/api/recipes") => {
+            let params = parse_form_encoded(body);
+            create_recipe_from_form(data_file, &params)?;
+            let recipe = form_value(&params, "recipe");
+            let json = web_state_json(data_file, recipe, "30")?;
+            write_http_response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                json.as_bytes(),
+            )?;
+        }
+        ("POST", "/api/samples") => {
+            let params = parse_form_encoded(body);
+            add_sample_from_form(data_file, &params)?;
+            let recipe = form_value(&params, "recipe");
+            let target_time = form_value(&params, "target_time").unwrap_or("30");
+            let json = web_state_json(data_file, recipe, target_time)?;
+            write_http_response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                json.as_bytes(),
+            )?;
+        }
+        ("POST", "/api/samples/delete") => {
+            let params = parse_form_encoded(body);
+            delete_sample_from_form(data_file, &params)?;
+            let recipe = form_value(&params, "recipe");
+            let target_time = form_value(&params, "target_time").unwrap_or("30");
+            let json = web_state_json(data_file, recipe, target_time)?;
+            write_http_response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                json.as_bytes(),
+            )?;
+        }
+        ("POST", "/api/recipes/delete") => {
+            let params = parse_form_encoded(body);
+            delete_recipe_from_form(data_file, &params)?;
+            let target_time = form_value(&params, "target_time").unwrap_or("30");
+            let json = web_state_json(data_file, None, target_time)?;
+            write_http_response(
+                stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                json.as_bytes(),
+            )?;
+        }
+        _ => write_http_response(
+            stream,
+            "404 Not Found",
+            "application/json; charset=utf-8",
+            json_error("Not found").as_bytes(),
+        )?,
+    }
+
+    Ok(())
+}
+
+fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
+    let mut buffer = [0; 8192];
+    let mut bytes = Vec::new();
+    let mut header_end = None;
+
+    loop {
+        let read = stream.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if header_end.is_none() {
+            header_end = find_bytes(&bytes, b"\r\n\r\n");
+        }
+        if let Some(end) = header_end {
+            let headers = String::from_utf8_lossy(&bytes[..end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            if bytes.len() >= end + 4 + content_length {
+                break;
+            }
+        }
+        if bytes.len() > 1_000_000 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP request is too large",
+            ));
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+) -> io::Result<()> {
+    let headers = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(headers.as_bytes())?;
+    stream.write_all(body)
+}
+
+fn create_recipe_from_form(
+    data_file: &Path,
+    params: &[(String, String)],
+) -> Result<(), Box<dyn Error>> {
+    let recipe = form_value(params, "recipe")
+        .ok_or_else(|| AppError::new("Recipe name is required"))?
+        .trim()
+        .to_string();
+    let dose = numeric_dose(
+        form_value(params, "dose")
+            .ok_or_else(|| AppError::new("Dose is required"))?
+            .trim(),
+    );
+    let shot_weight = numeric_dose(
+        form_value(params, "shot_weight")
+            .ok_or_else(|| AppError::new("Shot weight is required"))?
+            .trim(),
+    );
+
+    reject_tabs("recipe", &recipe)?;
+    reject_tabs("dose", &dose)?;
+    reject_tabs("shot weight", &shot_weight)?;
+    require_number("dose", &dose)?;
+    require_number("shot weight", &shot_weight)?;
+
+    let mut data = load_data(data_file)?;
+    if data.recipes.iter().any(|item| item.name == recipe) {
+        return Err(Box::new(AppError::new(format!(
+            "Recipe already exists: {recipe}"
+        ))));
+    }
+
+    data.recipes.push(Recipe {
+        name: recipe,
+        dose_weight_g: dose,
+        shot_weight_g: shot_weight,
+        samples: Vec::new(),
+    });
+    save_data(data_file, &data)?;
+    Ok(())
+}
+
+fn add_sample_from_form(
+    data_file: &Path,
+    params: &[(String, String)],
+) -> Result<(), Box<dyn Error>> {
+    let recipe = form_value(params, "recipe")
+        .ok_or_else(|| AppError::new("Choose a recipe first"))?
+        .trim()
+        .to_string();
+    let shot_time = numeric_time(
+        form_value(params, "time")
+            .ok_or_else(|| AppError::new("Shot time is required"))?
+            .trim(),
+    );
+    let grind = numeric_plain(
+        form_value(params, "grind")
+            .ok_or_else(|| AppError::new("Grind is required"))?
+            .trim(),
+    );
+
+    reject_tabs("recipe", &recipe)?;
+    reject_tabs("shot time", &shot_time)?;
+    reject_tabs("grind", &grind)?;
+    require_number("shot time", &shot_time)?;
+    require_grind_setting(&grind)?;
+
+    let mut data = load_data(data_file)?;
+    let existing = data
+        .recipes
+        .iter_mut()
+        .find(|item| item.name == recipe)
+        .ok_or_else(|| AppError::new(format!("Recipe not found: {recipe}")))?;
+
+    existing.samples.push(Sample {
+        recipe: recipe.clone(),
+        time: format!("{shot_time}s"),
+        grind,
+    });
+    save_data(data_file, &data)?;
+    Ok(())
+}
+
+fn delete_sample_from_form(
+    data_file: &Path,
+    params: &[(String, String)],
+) -> Result<(), Box<dyn Error>> {
+    let recipe = form_value(params, "recipe")
+        .ok_or_else(|| AppError::new("Recipe is required"))?
+        .trim()
+        .to_string();
+    let sample_index = form_value(params, "sample_index")
+        .ok_or_else(|| AppError::new("Sample index is required"))?
+        .parse::<usize>()
+        .map_err(|_| AppError::new("Sample index must be numeric"))?;
+
+    let mut data = load_data(data_file)?;
+    let existing = data
+        .recipes
+        .iter_mut()
+        .find(|item| item.name == recipe)
+        .ok_or_else(|| AppError::new(format!("Recipe not found: {recipe}")))?;
+
+    if sample_index >= existing.samples.len() {
+        return Err(Box::new(AppError::new("Sample not found")));
+    }
+
+    existing.samples.remove(sample_index);
+    save_data(data_file, &data)?;
+    Ok(())
+}
+
+fn delete_recipe_from_form(
+    data_file: &Path,
+    params: &[(String, String)],
+) -> Result<(), Box<dyn Error>> {
+    let recipe = form_value(params, "recipe")
+        .ok_or_else(|| AppError::new("Recipe is required"))?
+        .trim()
+        .to_string();
+
+    let mut data = load_data(data_file)?;
+    let before = data.recipes.len();
+    data.recipes.retain(|item| item.name != recipe);
+    if data.recipes.len() == before {
+        return Err(Box::new(AppError::new(format!(
+            "Recipe not found: {recipe}"
+        ))));
+    }
+
+    save_data(data_file, &data)?;
+    Ok(())
+}
+
+fn web_state_json(
+    data_file: &Path,
+    selected_recipe: Option<&str>,
+    target_time: &str,
+) -> Result<String, Box<dyn Error>> {
+    let data = load_data(data_file)?;
+    let selected_name = selected_recipe
+        .filter(|name| data.recipes.iter().any(|recipe| recipe.name == *name))
+        .or_else(|| data.recipes.first().map(|recipe| recipe.name.as_str()));
+    let target_seconds_text = numeric_value(target_time);
+    let target_seconds = if is_number(&target_seconds_text) {
+        parse_number(&target_seconds_text)
+    } else {
+        30.0
+    };
+
+    let mut json = String::new();
+    json.push_str("{\"recipes\":[");
+    for (index, recipe) in data.recipes.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&recipe_json(recipe));
+    }
+    json.push_str("],");
+    json.push_str("\"selected_recipe\":");
+    if let Some(name) = selected_name {
+        json_string_into(&mut json, name);
+    } else {
+        json.push_str("null");
+    }
+    json.push_str(&format!(",\"target_time\":\"{}\"", fmt(target_seconds)));
+    json.push_str(",\"prediction\":");
+
+    if let Some(recipe) =
+        selected_name.and_then(|name| data.recipes.iter().find(|candidate| candidate.name == name))
+    {
+        json.push_str(&prediction_json(recipe, target_seconds));
+    } else {
+        json.push_str("null");
+    }
+
+    json.push('}');
+    Ok(json)
+}
+
+fn recipe_json(recipe: &Recipe) -> String {
+    let mut json = String::new();
+    json.push('{');
+    json.push_str("\"name\":");
+    json_string_into(&mut json, &recipe.name);
+    json.push_str(",\"dose_weight_g\":");
+    json_string_into(&mut json, &recipe.dose_weight_g);
+    json.push_str(",\"shot_weight_g\":");
+    json_string_into(&mut json, &recipe.shot_weight_g);
+    json.push_str(",\"sample_count\":");
+    json.push_str(&recipe.samples.len().to_string());
+    json.push_str(",\"samples\":[");
+    for (index, sample) in recipe.samples.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push('{');
+        json.push_str("\"index\":");
+        json.push_str(&index.to_string());
+        json.push_str(",\"time\":");
+        json_string_into(&mut json, &sample.time);
+        json.push_str(",\"grind\":");
+        json_string_into(&mut json, &sample.grind);
+        json.push('}');
+    }
+    json.push_str("]}");
+    json
+}
+
+fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
+    let points = numeric_grind_points(recipe);
+    let model_points = local_model_points(&points, target_seconds, LOCAL_MODEL_SAMPLE_LIMIT);
+    let nearest = nearest_sample(recipe, target_seconds);
+    let mut json = String::new();
+    json.push('{');
+    json.push_str("\"target_seconds\":");
+    json.push_str(&fmt(target_seconds));
+    json.push_str(",\"numeric_sample_count\":");
+    json.push_str(&points.len().to_string());
+    json.push_str(",\"model_sample_count\":");
+    json.push_str(&model_points.len().to_string());
+
+    if let Some((sample, _)) = nearest {
+        json.push_str(",\"nearest\":{\"time\":");
+        json_string_into(&mut json, &sample.time);
+        json.push_str(",\"grind\":");
+        json_string_into(&mut json, &sample.grind);
+        json.push('}');
+    } else {
+        json.push_str(",\"nearest\":null");
+    }
+
+    if let Some((intercept, slope)) = theil_sen_model(&model_points) {
+        let predicted_grind = (target_seconds - intercept) / slope;
+        let model_r2 = r_squared(&model_points, intercept, slope);
+        let svg = render_graph_svg(
+            recipe,
+            &points,
+            &model_points,
+            target_seconds,
+            predicted_grind,
+            intercept,
+            slope,
+            model_r2,
+        );
+        json.push_str(",\"grind\":");
+        json.push_str(&fmt(predicted_grind));
+        json.push_str(",\"r_squared\":");
+        json.push_str(&fmt(model_r2));
+        json.push_str(",\"model\":\"time = ");
+        json.push_str(&fmt(intercept));
+        json.push_str(" + ");
+        json.push_str(&fmt(slope));
+        json.push_str(" * grind\"");
+        json.push_str(",\"graph_svg\":");
+        json_string_into(&mut json, &svg);
+        json.push_str(",\"note\":null");
+    } else {
+        json.push_str(",\"grind\":null,\"r_squared\":null,\"model\":null,\"graph_svg\":null");
+        json.push_str(",\"note\":\"Need 2 grind samples.\"");
+    }
+
+    json.push('}');
+    json
+}
+
+fn nearest_sample(recipe: &Recipe, target_seconds: f64) -> Option<(&Sample, f64)> {
+    recipe
+        .samples
+        .iter()
+        .filter_map(|sample| {
+            let shot_time = numeric_value(&sample.time);
+            if is_number(&shot_time) {
+                let seconds = parse_number(&shot_time);
+                Some((sample, (seconds - target_seconds).abs()))
+            } else {
+                None
+            }
+        })
+        .min_by(|(_, left), (_, right)| left.total_cmp(right))
+}
+
+fn parse_form_encoded(input: &str) -> Vec<(String, String)> {
+    input
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let (key, value) = part.split_once('=').unwrap_or((part, ""));
+            (url_decode(key), url_decode(value))
+        })
+        .collect()
+}
+
+fn form_value<'a>(params: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    params
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_str())
+}
+
+fn url_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                    if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                        output.push(byte);
+                        index += 3;
+                        continue;
+                    }
+                }
+                output.push(bytes[index]);
+                index += 1;
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn json_error(message: &str) -> String {
+    let mut json = String::from("{\"error\":");
+    json_string_into(&mut json, message);
+    json.push('}');
+    json
+}
+
+fn json_string_into(output: &mut String, value: &str) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            character if character.is_control() => {
+                output.push_str(&format!("\\u{:04x}", character as u32));
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+}
+
+fn web_app_html() -> &'static str {
+    r###"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Coffee Dial-In</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #181b20;
+      --panel-2: #20252c;
+      --text: #f5f1e8;
+      --muted: #aaa49a;
+      --line: #343a42;
+      --accent: #6ee7b7;
+      --accent-2: #f59e0b;
+      --danger: #fb7185;
+      --shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--bg); }
+    body {
+      min-height: 100%;
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        linear-gradient(135deg, rgba(110, 231, 183, 0.11), transparent 34rem),
+        radial-gradient(circle at 80% 0%, rgba(245, 158, 11, 0.12), transparent 28rem),
+        var(--bg);
+    }
+
+    button, input, select {
+      font: inherit;
+      color: inherit;
+    }
+
+    .app {
+      width: min(1180px, 100%);
+      min-height: 100dvh;
+      margin: 0 auto;
+      padding: max(18px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .primary-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .panel {
+      background: color-mix(in srgb, var(--panel) 94%, black);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .control-panel {
+      position: sticky;
+      top: 14px;
+      display: grid;
+      gap: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .control-section {
+      display: grid;
+      gap: 14px;
+      padding: 15px;
+    }
+
+    .control-section + .control-section {
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    .section-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .section-title span {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+
+    .fixed-value {
+      display: grid;
+      align-content: center;
+      min-height: 50px;
+      border: 1px solid rgba(52, 58, 66, 0.72);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 10px 13px;
+    }
+
+    .fixed-value strong {
+      font-size: 1.25rem;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .fixed-value span {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    input, select {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 12px 13px;
+      outline: none;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(110, 231, 183, 0.16);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 50px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #102018;
+      font-weight: 800;
+      padding: 0 16px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .button svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      flex: 0 0 auto;
+    }
+
+    .button.secondary {
+      background: #2c333b;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .button.compact {
+      min-height: 38px;
+      padding: 0 12px;
+      font-size: 0.88rem;
+    }
+
+    .button.sample-action {
+      background: var(--accent-2);
+      color: #251404;
+    }
+
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #2c333b;
+      color: var(--muted);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .icon-button.recipe-delete {
+      width: 50px;
+      height: 50px;
+    }
+
+    .icon-button svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+    }
+
+    .icon-button.danger:hover,
+    .icon-button.danger:focus {
+      color: #fecdd3;
+      border-color: rgba(251, 113, 133, 0.72);
+      background: rgba(251, 113, 133, 0.12);
+    }
+
+    .icon-button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .button:active { transform: translateY(1px); }
+
+    .row > .button {
+      align-self: end;
+    }
+
+    #sampleForm > .button {
+      grid-column: 1 / -1;
+    }
+
+    .recipe-actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    .prediction {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+      padding: 16px;
+      background: linear-gradient(135deg, #25342d, #191f20);
+      border: 1px solid rgba(110, 231, 183, 0.32);
+      border-radius: 8px;
+      cursor: default;
+    }
+
+    .prediction.is-actionable {
+      cursor: pointer;
+    }
+
+    .prediction.is-actionable:hover,
+    .prediction.is-actionable:focus-within {
+      border-color: rgba(245, 158, 11, 0.72);
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+    }
+
+    .prediction .label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .prediction .grind {
+      font-size: 3.2rem;
+      line-height: 0.9;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .prediction .target {
+      color: var(--accent-2);
+      font-weight: 800;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .graph-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      overflow: hidden;
+      min-height: 100%;
+    }
+
+    .graph-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .graph-head h2 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .graph-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      text-align: right;
+    }
+
+    .graph-wrap {
+      min-height: 280px;
+      padding: 10px;
+      overflow-x: auto;
+      background: #111827;
+      display: grid;
+      align-items: stretch;
+    }
+
+    .graph-wrap svg {
+      display: block;
+      width: 100%;
+      min-width: 620px;
+      height: 100%;
+      min-height: 380px;
+      border-radius: 6px;
+    }
+
+    .samples {
+      display: grid;
+      gap: 8px;
+      padding: 12px 16px 16px;
+    }
+
+    .sample-list {
+      display: grid;
+      gap: 8px;
+      max-height: 270px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .sample {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      padding: 10px 12px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .sample strong { font-size: 1rem; }
+    .sample span { color: var(--muted); }
+
+    .new-recipe {
+      display: none;
+      gap: 10px;
+      padding-top: 2px;
+    }
+
+    .new-recipe.is-open {
+      display: grid;
+    }
+
+    .empty, .status {
+      color: var(--muted);
+      padding: 22px;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      z-index: 5;
+      display: none;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #262b32;
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      color: var(--text);
+    }
+
+    .toast.is-visible { display: block; }
+    .toast.is-error { border-color: rgba(251, 113, 133, 0.65); color: #fecdd3; }
+
+    @media (max-width: 820px) {
+      .app { padding-inline: 12px; }
+      .primary-layout {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      .control-panel {
+        position: static;
+        box-shadow: none;
+      }
+      .control-section { padding: 14px 12px; }
+      .prediction .grind { font-size: 2.8rem; }
+      .graph-panel { min-height: 0; }
+      .graph-wrap { padding: 8px 0; }
+      .graph-wrap svg {
+        height: auto;
+        min-height: 0;
+      }
+      .samples { padding-inline: 12px; }
+    }
+
+    @media (max-width: 520px) {
+      .row {
+        grid-template-columns: 1fr;
+      }
+      .prediction {
+        grid-template-columns: 1fr;
+      }
+      .prediction .target {
+        text-align: left;
+      }
+      .graph-head {
+        display: grid;
+      }
+      .graph-meta {
+        justify-content: space-between;
+        text-align: left;
+      }
+      .button, input, select {
+        min-height: 54px;
+      }
+      .fixed-value { min-height: 54px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="primary-layout">
+      <div class="panel control-panel">
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Recipe</h2>
+            <span id="recipeMeta">0 samples</span>
+          </div>
+          <div class="field">
+            <label for="recipeSelect">Recipe</label>
+            <select id="recipeSelect"></select>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>Dose</label>
+              <div class="fixed-value" aria-live="polite">
+                <strong id="doseDisplay">--</strong>
+                <span>Fixed for recipe</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>Shot weight</label>
+              <div class="fixed-value" aria-live="polite">
+                <strong id="shotWeightDisplay">--</strong>
+                <span>Fixed for recipe</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="recipe-actions">
+            <button class="button secondary" id="toggleRecipeButton" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14"/>
+                <path d="M5 12h14"/>
+              </svg>
+              <span>New Recipe</span>
+            </button>
+            <button class="icon-button danger recipe-delete" id="deleteRecipeButton" type="button" aria-label="Delete recipe">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18"/>
+                <path d="M8 6V4h8v2"/>
+                <path d="M19 6l-1 14H6L5 6"/>
+                <path d="M10 11v5"/>
+                <path d="M14 11v5"/>
+              </svg>
+            </button>
+          </div>
+
+          <form id="recipeForm" class="new-recipe">
+            <div class="field">
+              <label for="recipeName">Recipe name</label>
+              <input id="recipeName" name="recipe" autocomplete="off" required>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="recipeDose">Dose grams</label>
+                <input id="recipeDose" name="dose" inputmode="decimal" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label for="recipeShotWeight">Shot grams</label>
+                <input id="recipeShotWeight" name="shot_weight" inputmode="decimal" autocomplete="off" required>
+              </div>
+            </div>
+            <button class="button" type="submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14"/>
+                <path d="M5 12h14"/>
+              </svg>
+              <span>Create Recipe</span>
+            </button>
+          </form>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">
+            <h2>Shot</h2>
+            <span id="nearestMeta">No nearest sample</span>
+          </div>
+
+          <div class="field">
+            <label for="targetTime">Target time</label>
+            <input id="targetTime" inputmode="decimal" value="30" autocomplete="off">
+          </div>
+
+          <div class="prediction" id="predictionBox">
+            <div>
+              <div class="label">Next grind</div>
+              <div class="grind" id="predictedGrind">--</div>
+            </div>
+            <div class="target" id="targetMeta">30s</div>
+          </div>
+
+          <form id="sampleForm" class="row">
+            <div class="field">
+              <label for="shotTime">Shot time</label>
+              <input id="shotTime" name="time" inputmode="decimal" autocomplete="off" required>
+            </div>
+            <div class="field">
+              <label for="grind">Grind</label>
+              <input id="grind" name="grind" inputmode="decimal" autocomplete="off" required>
+            </div>
+            <button class="button sample-action" type="submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14"/>
+                <path d="M5 12h14"/>
+              </svg>
+              <span>Add Sample</span>
+            </button>
+          </form>
+        </section>
+      </div>
+
+      <div class="panel graph-panel">
+        <div class="graph-head">
+          <h2 id="graphTitle">Shot graph</h2>
+          <div class="graph-meta">
+            <span class="meta" id="modelMeta"></span>
+            <button class="button secondary compact" id="refreshButton" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="graph-wrap" id="graphWrap">
+          <div class="empty">Need 2 grind samples.</div>
+        </div>
+        <div class="samples">
+          <div class="meta" id="sampleMeta"></div>
+          <div class="sample-list" id="sampleList"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = { selectedRecipe: "", targetTime: "30", recipes: [] };
+
+    const els = {
+      recipeSelect: document.querySelector("#recipeSelect"),
+      targetTime: document.querySelector("#targetTime"),
+      doseDisplay: document.querySelector("#doseDisplay"),
+      shotWeightDisplay: document.querySelector("#shotWeightDisplay"),
+      predictedGrind: document.querySelector("#predictedGrind"),
+      predictionBox: document.querySelector("#predictionBox"),
+      targetMeta: document.querySelector("#targetMeta"),
+      shotTime: document.querySelector("#shotTime"),
+      grind: document.querySelector("#grind"),
+      graphWrap: document.querySelector("#graphWrap"),
+      graphTitle: document.querySelector("#graphTitle"),
+      modelMeta: document.querySelector("#modelMeta"),
+      sampleMeta: document.querySelector("#sampleMeta"),
+      sampleList: document.querySelector("#sampleList"),
+      sampleForm: document.querySelector("#sampleForm"),
+      recipeForm: document.querySelector("#recipeForm"),
+      recipeMeta: document.querySelector("#recipeMeta"),
+      nearestMeta: document.querySelector("#nearestMeta"),
+      deleteRecipeButton: document.querySelector("#deleteRecipeButton"),
+      toast: document.querySelector("#toast")
+    };
+
+    function params(values) {
+      return new URLSearchParams(values);
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Request failed");
+      }
+      return data;
+    }
+
+    async function loadState() {
+      const query = params({ recipe: state.selectedRecipe, time: els.targetTime.value || state.targetTime });
+      const data = await api(`/api/state?${query}`);
+      render(data);
+    }
+
+    function render(data) {
+      state.recipes = data.recipes;
+      state.selectedRecipe = data.selected_recipe || "";
+      state.targetTime = data.target_time;
+
+      els.recipeSelect.innerHTML = "";
+      for (const recipe of data.recipes) {
+        const option = document.createElement("option");
+        option.value = recipe.name;
+        option.textContent = recipe.name;
+        option.selected = recipe.name === state.selectedRecipe;
+        els.recipeSelect.append(option);
+      }
+
+      const recipe = data.recipes.find(item => item.name === state.selectedRecipe);
+      els.targetTime.value = data.target_time;
+      els.doseDisplay.textContent = recipe ? `${recipe.dose_weight_g}g` : "--";
+      els.shotWeightDisplay.textContent = recipe && recipe.shot_weight_g ? `${recipe.shot_weight_g}g` : "--";
+      els.graphTitle.textContent = recipe ? recipe.name : "Shot graph";
+      els.recipeMeta.textContent = recipe ? `${recipe.sample_count} samples` : "No recipe";
+      els.deleteRecipeButton.disabled = !recipe;
+
+      const prediction = data.prediction;
+      if (prediction && prediction.grind !== null) {
+        els.predictedGrind.textContent = Number(prediction.grind).toFixed(2);
+        els.predictionBox.dataset.predictedGrind = Number(prediction.grind).toFixed(2);
+        els.predictionBox.classList.add("is-actionable");
+        els.targetMeta.textContent = `${Number(prediction.target_seconds).toFixed(2)}s target`;
+        els.modelMeta.textContent = `${prediction.model_sample_count} model samples, R2 ${Number(prediction.r_squared).toFixed(2)}`;
+        els.graphWrap.innerHTML = prediction.graph_svg;
+        els.nearestMeta.textContent = prediction.nearest ? `nearest ${prediction.nearest.time} at ${prediction.nearest.grind}` : "No nearest sample";
+      } else {
+        els.predictedGrind.textContent = "--";
+        els.predictionBox.dataset.predictedGrind = "";
+        els.predictionBox.classList.remove("is-actionable");
+        els.targetMeta.textContent = `${Number(data.target_time).toFixed(2)}s target`;
+        els.modelMeta.textContent = "";
+        els.graphWrap.innerHTML = `<div class="empty">${prediction ? prediction.note : "Create a recipe to begin."}</div>`;
+        els.nearestMeta.textContent = prediction && prediction.nearest ? `nearest ${prediction.nearest.time} at ${prediction.nearest.grind}` : "No nearest sample";
+      }
+
+      renderSamples(recipe);
+    }
+
+    function renderSamples(recipe) {
+      els.sampleList.innerHTML = "";
+      if (!recipe) {
+        els.sampleMeta.textContent = "No recipe selected";
+        return;
+      }
+      els.sampleMeta.textContent = `${recipe.sample_count} samples`;
+      for (const sample of [...recipe.samples].reverse()) {
+        const row = document.createElement("div");
+        row.className = "sample";
+        row.innerHTML = `<strong>${escapeHtml(sample.time)}</strong><span>grind ${escapeHtml(sample.grind)}</span><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
+        els.sampleList.append(row);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[character]));
+    }
+
+    function showToast(message, isError = false) {
+      els.toast.textContent = message;
+      els.toast.className = `toast is-visible${isError ? " is-error" : ""}`;
+      clearTimeout(showToast.timeout);
+      showToast.timeout = setTimeout(() => {
+        els.toast.className = "toast";
+      }, 2600);
+    }
+
+    els.recipeSelect.addEventListener("change", () => {
+      state.selectedRecipe = els.recipeSelect.value;
+      loadState().catch(error => showToast(error.message, true));
+    });
+
+    els.targetTime.addEventListener("change", () => {
+      loadState().catch(error => showToast(error.message, true));
+    });
+
+    document.querySelector("#refreshButton").addEventListener("click", () => {
+      loadState().catch(error => showToast(error.message, true));
+    });
+
+    els.predictionBox.addEventListener("click", () => {
+      const predictedGrind = els.predictionBox.dataset.predictedGrind;
+      if (!predictedGrind) {
+        return;
+      }
+      els.grind.value = predictedGrind;
+      els.shotTime.focus();
+      showToast("Grind filled for next shot");
+    });
+
+    document.querySelector("#toggleRecipeButton").addEventListener("click", () => {
+      els.recipeForm.classList.toggle("is-open");
+      if (els.recipeForm.classList.contains("is-open")) {
+        document.querySelector("#recipeName").focus();
+      }
+    });
+
+    els.deleteRecipeButton.addEventListener("click", async () => {
+      if (!state.selectedRecipe) {
+        return;
+      }
+      if (!confirm(`Delete recipe "${state.selectedRecipe}" and all of its shots?`)) {
+        return;
+      }
+      try {
+        const data = await api("/api/recipes/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params({ recipe: state.selectedRecipe, target_time: els.targetTime.value })
+        });
+        render(data);
+        showToast("Recipe deleted");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    els.sampleList.addEventListener("click", async event => {
+      const button = event.target.closest(".delete-sample");
+      if (!button) {
+        return;
+      }
+      const label = button.dataset.sampleLabel || "this shot";
+      if (!confirm(`Delete shot ${label}?`)) {
+        return;
+      }
+      try {
+        const data = await api("/api/samples/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params({
+            recipe: state.selectedRecipe,
+            sample_index: button.dataset.sampleIndex,
+            target_time: els.targetTime.value
+          })
+        });
+        render(data);
+        showToast("Shot deleted");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    els.sampleForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        const body = params({
+          recipe: state.selectedRecipe,
+          time: els.shotTime.value,
+          grind: els.grind.value,
+          target_time: els.targetTime.value
+        });
+        const data = await api("/api/samples", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body
+        });
+        event.target.reset();
+        render(data);
+        showToast("Sample added");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    els.recipeForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        const form = new FormData(event.target);
+        const data = await api("/api/recipes", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params({ recipe: form.get("recipe"), dose: form.get("dose"), shot_weight: form.get("shot_weight") })
+        });
+        event.target.reset();
+        event.target.classList.remove("is-open");
+        render(data);
+        showToast("Recipe created");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    loadState().catch(error => showToast(error.message, true));
+  </script>
+</body>
+</html>
+"###
+}
+
 fn remove_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut parser = ArgParser::new(args);
     let mut recipe = None;
@@ -495,16 +1913,10 @@ fn load_data(data_file: &Path) -> Result<Data, Box<dyn Error>> {
     let mut lines = content.lines();
     let header = lines.next().unwrap_or("");
 
-    if header == "name\tdose_size\tgrind\tshot_time\tbean" {
-        let data = parse_legacy_recipe_data(lines);
-        save_data(data_file, &data)?;
-        return Ok(data);
-    }
-
-    if header == "record_type\trecipe\ttime\tgrind\tdose_weight_g" {
-        let data = parse_sample_dose_data(lines);
-        save_data(data_file, &data)?;
-        return Ok(data);
+    if header != HEADER.trim_end() {
+        return Err(Box::new(AppError::new(format!(
+            "Unexpected data file header: {header}"
+        ))));
     }
 
     let mut data = Data::default();
@@ -514,13 +1926,14 @@ fn load_data(data_file: &Path) -> Result<Data, Box<dyn Error>> {
             Some("recipe") => data.recipes.push(Recipe {
                 name: get_field(&fields, 1).to_string(),
                 dose_weight_g: get_field(&fields, 2).to_string(),
+                shot_weight_g: get_field(&fields, 3).to_string(),
                 samples: Vec::new(),
             }),
             Some("sample") => {
                 let sample = Sample {
                     recipe: get_field(&fields, 1).to_string(),
-                    time: get_field(&fields, 3).to_string(),
-                    grind: get_field(&fields, 4).to_string(),
+                    time: get_field(&fields, 4).to_string(),
+                    grind: get_field(&fields, 5).to_string(),
                 };
                 if let Some(recipe) = data
                     .recipes
@@ -537,85 +1950,6 @@ fn load_data(data_file: &Path) -> Result<Data, Box<dyn Error>> {
     Ok(data)
 }
 
-fn parse_legacy_recipe_data<'a>(lines: impl Iterator<Item = &'a str>) -> Data {
-    let mut data = Data::default();
-    for line in lines {
-        let fields: Vec<&str> = line.split('\t').collect();
-        let name = get_field(&fields, 0).to_string();
-        let dose = numeric_value(get_field(&fields, 1));
-        let grind = get_field(&fields, 2);
-        let time = get_field(&fields, 3);
-
-        let mut recipe = Recipe {
-            name: name.clone(),
-            dose_weight_g: dose,
-            samples: Vec::new(),
-        };
-
-        if !time.is_empty()
-            && time.to_ascii_lowercase() != "unknown"
-            && is_number(&numeric_value(grind))
-        {
-            recipe.samples.push(Sample {
-                recipe: name,
-                time: time.to_string(),
-                grind: grind.to_string(),
-            });
-        }
-        data.recipes.push(recipe);
-    }
-    data
-}
-
-fn parse_sample_dose_data<'a>(lines: impl Iterator<Item = &'a str>) -> Data {
-    let mut data = Data::default();
-    let mut deferred_samples: Vec<Sample> = Vec::new();
-
-    for line in lines {
-        let fields: Vec<&str> = line.split('\t').collect();
-        match fields.first().copied() {
-            Some("recipe") => data.recipes.push(Recipe {
-                name: get_field(&fields, 1).to_string(),
-                dose_weight_g: String::new(),
-                samples: Vec::new(),
-            }),
-            Some("sample") => {
-                let recipe_name = get_field(&fields, 1).to_string();
-                let dose = numeric_value(get_field(&fields, 4));
-                if let Some(recipe) = data
-                    .recipes
-                    .iter_mut()
-                    .find(|item| item.name == recipe_name)
-                {
-                    if recipe.dose_weight_g.is_empty() && !dose.is_empty() {
-                        recipe.dose_weight_g = dose;
-                    }
-                }
-                if is_number(&numeric_value(get_field(&fields, 3))) {
-                    deferred_samples.push(Sample {
-                        recipe: recipe_name,
-                        time: get_field(&fields, 2).to_string(),
-                        grind: numeric_value(get_field(&fields, 3)),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for sample in deferred_samples {
-        if let Some(recipe) = data
-            .recipes
-            .iter_mut()
-            .find(|item| item.name == sample.recipe)
-        {
-            recipe.samples.push(sample);
-        }
-    }
-
-    data
-}
-
 fn ensure_data_file(data_file: &Path) -> io::Result<()> {
     if !data_file.exists() {
         fs::write(data_file, HEADER)?;
@@ -630,11 +1964,13 @@ fn save_data(data_file: &Path, data: &Data) -> io::Result<()> {
         output.push_str(&recipe.name);
         output.push('\t');
         output.push_str(&recipe.dose_weight_g);
+        output.push('\t');
+        output.push_str(&recipe.shot_weight_g);
         output.push_str("\t\t\n");
         for sample in &recipe.samples {
             output.push_str("sample\t");
             output.push_str(&sample.recipe);
-            output.push_str("\t\t");
+            output.push_str("\t\t\t");
             output.push_str(&sample.time);
             output.push('\t');
             output.push_str(&sample.grind);
@@ -862,8 +2198,9 @@ fn render_graph_svg(
     let predicted_x = x(predicted_grind);
     let title = svg_escape(&recipe.name);
     let subtitle = svg_escape(&format!(
-        "dose {}g - {} samples - local model {} samples - time = {} + {} * grind - R2 {}",
+        "dose {}g - shot {}g - {} samples - local model {} samples - time = {} + {} * grind - R2 {}",
         recipe.dose_weight_g,
+        recipe.shot_weight_g,
         points.len(),
         model_points.len(),
         fmt(intercept),
@@ -953,33 +2290,12 @@ fn render_graph_svg(
     svg.push_str(&format!(
         r##"<text x="{:.2}" y="{:.2}" font-family="Arial, sans-serif" font-size="13" fill="#e2e8f0">grind setting</text>
 <text x="22" y="{:.2}" transform="rotate(-90 22 {:.2})" font-family="Arial, sans-serif" font-size="13" fill="#e2e8f0">shot time seconds</text>
-<g font-family="Arial, sans-serif" font-size="13" fill="#e2e8f0">
-  <rect x="{:.2}" y="90" width="286" height="89" rx="6" fill="#0f172a" stroke="#334155"/>
-  <circle cx="{:.2}" cy="111" r="5" fill="#2dd4bf"/>
-  <text x="{:.2}" y="116">local model sample</text>
-  <circle cx="{:.2}" cy="136" r="4" fill="#64748b"/>
-  <text x="{:.2}" y="141">context sample</text>
-  <line x1="{:.2}" y1="159" x2="{:.2}" y2="159" stroke="#60a5fa" stroke-width="3"/>
-  <text x="{:.2}" y="164">local Theil-Sen line</text>
-  <text x="{:.2}" y="199" font-size="14" font-weight="700" fill="#fbbf24">target {}s -> grind {}</text>
-</g>
 </svg>
 "##,
         left + (plot_width / 2.0) - 34.0,
         height - 18.0,
         top + (plot_height / 2.0) + 56.0,
-        top + (plot_height / 2.0) + 56.0,
-        width - 330.0,
-        width - 310.0,
-        width - 294.0,
-        width - 310.0,
-        width - 294.0,
-        width - 316.0,
-        width - 286.0,
-        width - 274.0,
-        width - 330.0,
-        fmt(target_seconds),
-        fmt(predicted_grind)
+        top + (plot_height / 2.0) + 56.0
     ));
 
     svg
@@ -1184,6 +2500,7 @@ mod tests {
         let recipe = Recipe {
             name: "Test & Espresso".to_string(),
             dose_weight_g: "18".to_string(),
+            shot_weight_g: "36".to_string(),
             samples: Vec::new(),
         };
         let points = vec![(16.0, 25.0), (20.0, 35.0)];
@@ -1193,8 +2510,8 @@ mod tests {
 
         assert!(svg.contains("<svg"));
         assert!(svg.contains("Test &amp; Espresso"));
-        assert!(svg.contains("target 30.00s -> grind 18.00"));
-        assert!(svg.contains("local Theil-Sen line"));
+        assert!(svg.contains("stroke=\"#60a5fa\""));
+        assert!(!svg.contains("local Theil-Sen line"));
         assert!(svg.contains(">60.00s</text>"));
     }
 }
