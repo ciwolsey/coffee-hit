@@ -1893,6 +1893,77 @@ fn web_app_html() -> &'static str {
       padding: 16px;
     }
 
+    .model-choice-field {
+      display: none;
+      gap: 10px;
+    }
+
+    .modal-form.is-model-choice .manual-grind-field {
+      display: none;
+    }
+
+    .modal-form.is-model-choice .model-choice-field {
+      display: grid;
+    }
+
+    .model-choice-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .model-choice-button {
+      display: grid;
+      gap: 4px;
+      justify-items: start;
+      width: 100%;
+      height: auto;
+      min-height: 64px;
+      padding: 10px 12px;
+      color: #eaffb7;
+      text-align: left;
+      border-color: rgba(166, 226, 46, 0.48);
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.06), rgba(166, 226, 46, 0.06)),
+        rgba(18, 28, 18, 0.72);
+    }
+
+    .model-choice-button .model-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .model-choice-button .model-value {
+      font-size: 1.35rem;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .model-choice-button.is-selected {
+      border-color: rgba(166, 226, 46, 0.88);
+      box-shadow: 0 0 0 3px var(--goal-bg);
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.14), rgba(166, 226, 46, 0.16)),
+        rgba(22, 35, 20, 0.96);
+    }
+
+    .model-choice-button.curve-model {
+      color: #fbbf24;
+      border-color: rgba(251, 191, 36, 0.48);
+      background:
+        linear-gradient(180deg, rgba(251, 191, 36, 0.08), rgba(251, 191, 36, 0.04)),
+        rgba(32, 25, 12, 0.8);
+    }
+
+    .model-choice-button.curve-model.is-selected {
+      border-color: rgba(251, 191, 36, 0.88);
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.16);
+    }
+
     .empty, .status {
       color: var(--muted);
       padding: 22px;
@@ -2207,9 +2278,22 @@ fn web_app_html() -> &'static str {
         <label for="shotTime">Shot time</label>
         <input id="shotTime" name="time" inputmode="decimal" autocomplete="off" required>
       </div>
-      <div class="field">
+      <div class="field manual-grind-field" id="manualGrindField">
         <label for="grind">Grind</label>
         <input id="grind" name="grind" inputmode="decimal" autocomplete="off" required>
+      </div>
+      <div class="field model-choice-field" id="modelChoiceField">
+        <label>Grind model</label>
+        <div class="model-choice-buttons">
+          <button class="icon-button model-choice-button linear-model" id="linearModelButton" type="button" data-model="linear">
+            <span class="model-label">Linear</span>
+            <span class="model-value" id="linearModelValue">--</span>
+          </button>
+          <button class="icon-button model-choice-button curve-model" id="curveModelButton" type="button" data-model="curve">
+            <span class="model-label">Curve</span>
+            <span class="model-value" id="curveModelValue">--</span>
+          </button>
+        </div>
       </div>
       <button class="button sample-action" type="submit">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2244,6 +2328,10 @@ fn web_app_html() -> &'static str {
       recipeForm: document.querySelector("#recipeForm"),
       sampleDialog: document.querySelector("#sampleDialog"),
       recipeDialog: document.querySelector("#recipeDialog"),
+      linearModelButton: document.querySelector("#linearModelButton"),
+      curveModelButton: document.querySelector("#curveModelButton"),
+      linearModelValue: document.querySelector("#linearModelValue"),
+      curveModelValue: document.querySelector("#curveModelValue"),
       openSampleButton: document.querySelector("#openSampleButton"),
       shotMeter: document.querySelector("#shotMeter"),
       shotMeterText: document.querySelector("#shotMeterText"),
@@ -2298,6 +2386,9 @@ fn web_app_html() -> &'static str {
           ? `Curve ${Number(prediction.curve_grind).toFixed(2)}`
           : "Curve --";
         els.predictionBox.dataset.predictedGrind = Number(prediction.grind).toFixed(2);
+        els.predictionBox.dataset.curveGrind = prediction.curve_grind !== null
+          ? Number(prediction.curve_grind).toFixed(2)
+          : "";
         els.predictionBox.classList.add("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(prediction.target_seconds))}s target`;
         els.graphWrap.innerHTML = prediction.graph_svg;
@@ -2305,6 +2396,7 @@ fn web_app_html() -> &'static str {
         els.predictedGrind.textContent = "--";
         els.curveGrind.textContent = "Curve --";
         els.predictionBox.dataset.predictedGrind = "";
+        els.predictionBox.dataset.curveGrind = "";
         els.predictionBox.classList.remove("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
         if (prediction?.graph_error) {
@@ -2390,6 +2482,53 @@ fn web_app_html() -> &'static str {
       return true;
     }
 
+    function resetModelChoice() {
+      els.linearModelButton.classList.remove("is-selected");
+      els.curveModelButton.classList.remove("is-selected");
+      els.linearModelButton.setAttribute("aria-pressed", "false");
+      els.curveModelButton.setAttribute("aria-pressed", "false");
+    }
+
+    function openManualSampleDialog() {
+      els.sampleForm.classList.remove("is-model-choice");
+      els.grind.required = true;
+      resetModelChoice();
+      fillPredictedGrind();
+      openDialog(els.sampleDialog, els.shotTime);
+    }
+
+    function openModelChoiceSampleDialog() {
+      const linearGrind = els.predictionBox.dataset.predictedGrind;
+      const curveGrind = els.predictionBox.dataset.curveGrind;
+      if (!linearGrind) {
+        return false;
+      }
+
+      els.sampleForm.reset();
+      els.grind.required = false;
+      els.grind.value = "";
+      resetModelChoice();
+      els.sampleForm.classList.add("is-model-choice");
+      els.linearModelButton.dataset.grind = linearGrind;
+      els.curveModelButton.dataset.grind = curveGrind || "";
+      els.linearModelValue.textContent = linearGrind;
+      els.curveModelValue.textContent = curveGrind || "--";
+      els.curveModelButton.disabled = !curveGrind;
+      openDialog(els.sampleDialog, els.shotTime);
+      return true;
+    }
+
+    function chooseModelGrind(button) {
+      const grind = button.dataset.grind;
+      if (!grind) {
+        return;
+      }
+      els.grind.value = grind;
+      resetModelChoice();
+      button.classList.add("is-selected");
+      button.setAttribute("aria-pressed", "true");
+    }
+
     els.recipeSelect.addEventListener("change", () => {
       state.selectedRecipe = els.recipeSelect.value;
       loadState().catch(error => showToast(error.message, true));
@@ -2404,11 +2543,9 @@ fn web_app_html() -> &'static str {
     });
 
     els.predictionBox.addEventListener("click", () => {
-      if (!fillPredictedGrind()) {
+      if (!openModelChoiceSampleDialog()) {
         return;
       }
-      openDialog(els.sampleDialog, els.shotTime);
-      showToast("Grind filled for next shot");
     });
 
     document.querySelector("#toggleRecipeButton").addEventListener("click", () => {
@@ -2416,9 +2553,11 @@ fn web_app_html() -> &'static str {
     });
 
     els.openSampleButton.addEventListener("click", () => {
-      fillPredictedGrind();
-      openDialog(els.sampleDialog, els.shotTime);
+      openManualSampleDialog();
     });
+
+    els.linearModelButton.addEventListener("click", () => chooseModelGrind(els.linearModelButton));
+    els.curveModelButton.addEventListener("click", () => chooseModelGrind(els.curveModelButton));
 
     document.querySelectorAll("[data-close-dialog]").forEach(button => {
       button.addEventListener("click", () => {
@@ -2474,6 +2613,10 @@ fn web_app_html() -> &'static str {
 
     els.sampleForm.addEventListener("submit", async event => {
       event.preventDefault();
+      if (els.sampleForm.classList.contains("is-model-choice") && !els.grind.value) {
+        showToast("Choose Linear or Curve grind", true);
+        return;
+      }
       try {
         const body = params({
           recipe: state.selectedRecipe,
@@ -2487,6 +2630,9 @@ fn web_app_html() -> &'static str {
           body
         });
         event.target.reset();
+        els.sampleForm.classList.remove("is-model-choice");
+        els.grind.required = true;
+        resetModelChoice();
         els.sampleDialog.close();
         render(data);
         showToast("Shot added");
