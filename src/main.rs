@@ -932,9 +932,16 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
         json.push_str(" * grind\"");
         json.push_str(",\"graph_svg\":");
         json_string_into(&mut json, &svg);
+        json.push_str(",\"graph_error\":null");
         json.push_str(",\"note\":null");
     } else {
         json.push_str(",\"grind\":null,\"r_squared\":null,\"model\":null,\"graph_svg\":null");
+        json.push_str(",\"graph_error\":");
+        if let Some(error) = theil_sen_fit_error(&model_points) {
+            json_string_into(&mut json, &error);
+        } else {
+            json.push_str("null");
+        }
         json.push_str(",\"note\":");
         json_string_into(&mut json, &prediction_note(&points));
     }
@@ -949,6 +956,27 @@ fn prediction_note(points: &[(f64, f64)]) -> String {
         1 => "Log one more shot at a different grind to unlock prediction.".to_string(),
         _ => "Use different grind settings to unlock prediction.".to_string(),
     }
+}
+
+fn theil_sen_fit_error(points: &[(f64, f64)]) -> Option<String> {
+    if points.len() < 2 {
+        return None;
+    }
+
+    let varying_grind = points
+        .windows(2)
+        .any(|pair| pair[0].0.total_cmp(&pair[1].0) != std::cmp::Ordering::Equal);
+    if !varying_grind {
+        return Some(
+            "Theil-Sen model could not be fitted because the local shots use the same grind setting."
+                .to_string(),
+        );
+    }
+
+    Some(
+        "Theil-Sen model could not be fitted because the local shots do not show a usable grind/time relationship."
+            .to_string(),
+    )
 }
 
 fn nearest_sample(recipe: &Recipe, target_seconds: f64) -> Option<(&Sample, f64)> {
@@ -1103,7 +1131,7 @@ fn web_app_html() -> &'static str {
 
     .primary-layout {
       display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+      grid-template-columns: minmax(280px, 0.68fr) minmax(0, 1.55fr);
       gap: 16px;
       align-items: stretch;
     }
@@ -1120,6 +1148,7 @@ fn web_app_html() -> &'static str {
       top: 14px;
       display: grid;
       gap: 10px;
+      align-content: start;
       padding: 0;
       overflow: visible;
       background: transparent;
@@ -1129,7 +1158,9 @@ fn web_app_html() -> &'static str {
 
     .control-section {
       display: grid;
-      gap: 14px;
+      grid-template-rows: 48px auto;
+      align-content: start;
+      gap: 0;
       padding: 0;
       background: color-mix(in srgb, var(--panel) 94%, black);
       border: 1px solid var(--line);
@@ -1149,7 +1180,7 @@ fn web_app_html() -> &'static str {
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      min-height: 64px;
+      min-height: 48px;
       padding: 0 15px;
       border-bottom: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.026);
@@ -1179,7 +1210,8 @@ fn web_app_html() -> &'static str {
     }
 
     .field.inline-setting {
-      grid-template-columns: auto minmax(7rem, 1fr);
+      grid-template-columns: auto minmax(4.5rem, 6rem);
+      justify-content: space-between;
       align-items: center;
       gap: 12px;
       min-height: 50px;
@@ -1210,14 +1242,15 @@ fn web_app_html() -> &'static str {
     }
 
     .field.inline-setting input {
+      width: 6rem;
       min-height: 38px;
       border-color: transparent;
       background: transparent;
-      text-align: right;
+      text-align: center;
       font-size: 2rem;
       font-weight: 500;
       color: #f8fafc;
-      padding-right: 0;
+      padding: 6px 4px;
     }
 
     .field.inline-setting input:focus {
@@ -1309,8 +1342,8 @@ fn web_app_html() -> &'static str {
         0 9px 20px rgba(0, 0, 0, 0.26);
     }
 
-    .button.goal-action::after,
-    .button.sample-action::after {
+    .button:not(:disabled)::after,
+    .icon-button:not(:disabled)::after {
       content: "";
       position: absolute;
       inset: 0;
@@ -1329,8 +1362,8 @@ fn web_app_html() -> &'static str {
       animation: button-shimmer 7.5s ease-in-out infinite;
     }
 
-    .button.goal-action > *,
-    .button.sample-action > * {
+    .button > *,
+    .icon-button > * {
       position: relative;
       z-index: 1;
     }
@@ -1361,6 +1394,8 @@ fn web_app_html() -> &'static str {
       color: var(--muted);
       cursor: pointer;
       touch-action: manipulation;
+      position: relative;
+      overflow: hidden;
     }
 
     .icon-button.recipe-delete {
@@ -1419,8 +1454,8 @@ fn web_app_html() -> &'static str {
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .button.goal-action::after,
-      .button.sample-action::after {
+      .button::after,
+      .icon-button::after {
         animation: none;
         display: none;
       }
@@ -1450,6 +1485,26 @@ fn web_app_html() -> &'static str {
     .shot-actions {
       display: grid;
       margin-top: 4px;
+    }
+
+    .add-sample-button {
+      width: 38px;
+      height: 38px;
+      color: #eaffb7;
+      border-color: rgba(166, 226, 46, 0.72);
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.09), rgba(166, 226, 46, 0.08) 42%, rgba(166, 226, 46, 0.16)),
+        rgba(18, 28, 18, 0.92);
+    }
+
+    .add-sample-button:hover,
+    .add-sample-button:focus {
+      color: #f0ffd0;
+      border-color: rgba(166, 226, 46, 0.86);
+      background:
+        linear-gradient(180deg, rgba(234, 255, 183, 0.14), rgba(166, 226, 46, 0.14) 42%, rgba(166, 226, 46, 0.22)),
+        rgba(22, 35, 20, 0.96);
+      box-shadow: 0 0 0 3px var(--goal-bg);
     }
 
     .prediction {
@@ -1498,7 +1553,7 @@ fn web_app_html() -> &'static str {
 
     .graph-panel {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
       min-height: 100%;
     }
@@ -1508,7 +1563,7 @@ fn web_app_html() -> &'static str {
       justify-content: space-between;
       gap: 18px;
       align-items: center;
-      min-height: 64px;
+      min-height: 48px;
       padding: 0 16px 0 18px;
       border-bottom: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.026);
@@ -1583,11 +1638,20 @@ fn web_app_html() -> &'static str {
       box-shadow: 0 0 10px rgba(166, 226, 46, 0.22);
     }
 
+    .graph-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+      height: 560px;
+      min-height: 0;
+    }
+
     .graph-wrap {
       min-height: 280px;
-      padding: 10px;
-      overflow-x: auto;
-      background: #15181d;
+      padding: 8px 10px 10px;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.014), transparent 7rem),
+        #15181d;
       display: grid;
       align-items: stretch;
     }
@@ -1595,70 +1659,97 @@ fn web_app_html() -> &'static str {
     .graph-wrap svg {
       display: block;
       width: 100%;
-      min-width: 620px;
       height: 100%;
-      min-height: 380px;
+      min-height: 0;
       border-radius: 6px;
     }
 
     .samples {
       display: grid;
       gap: 8px;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      min-height: 0;
+      overflow: hidden;
       padding: 12px 16px 16px;
+      border-left: 1px solid var(--line);
+      background: rgba(13, 15, 18, 0.36);
+    }
+
+    .samples-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .sample-list-head,
+    .sample-list {
+      min-width: 0;
+    }
+
+    .sample-list-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+      gap: 10px;
+      padding: 0 10px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .sample-list {
       display: grid;
-      gap: 8px;
-      max-height: 270px;
-      overflow: auto;
+      align-content: start;
+      gap: 6px;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
       padding-right: 2px;
     }
 
     .sample {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
       align-items: center;
       gap: 10px;
-      min-height: 44px;
-      padding: 10px 12px;
+      min-height: 38px;
+      padding: 5px 6px 5px 10px;
       background: var(--panel-2);
       border: 1px solid var(--line);
       border-radius: 8px;
     }
 
-    .sample-values {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px 14px;
-      min-width: 0;
-    }
-
-    .sample-metric {
+    .sample-cell {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
       min-width: 0;
       color: var(--text);
       font-weight: 800;
       line-height: 1;
     }
 
-    .sample-metric svg {
-      width: 17px;
-      height: 17px;
+    .sample-cell svg {
+      width: 16px;
+      height: 16px;
       flex: 0 0 auto;
-      color: #f8fafc;
+      color: var(--muted);
       stroke: currentColor;
     }
 
-    .sample-metric .metric-label {
-      color: var(--muted);
-      font-size: 0.76rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+    .sample-cell span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+
+    .sample .icon-button {
+      width: 34px;
+      height: 34px;
     }
 
     dialog.modal {
@@ -1724,6 +1815,31 @@ fn web_app_html() -> &'static str {
       text-shadow: 0 0 18px rgba(170, 164, 154, 0.035);
     }
 
+    .graph-wrap .graph-error {
+      min-height: 380px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 10px;
+      padding: 24px;
+      color: #ffd6df;
+      text-align: center;
+      border: 1px solid var(--danger-line);
+      border-radius: 8px;
+      background: var(--danger-bg);
+    }
+
+    .graph-error strong {
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .graph-error span {
+      max-width: 34rem;
+      color: var(--danger-text);
+      line-height: 1.35;
+    }
+
     .toast {
       position: fixed;
       left: 16px;
@@ -1762,12 +1878,23 @@ fn web_app_html() -> &'static str {
       }
       .prediction .grind { font-size: 2.8rem; }
       .graph-panel { min-height: 0; }
-      .graph-wrap { padding: 8px 0; }
+      .graph-panel { grid-template-rows: auto auto; }
+      .graph-body {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+      .graph-wrap { padding: 6px; }
       .graph-wrap svg {
         height: auto;
         min-height: 0;
       }
-      .samples { padding-inline: 12px; }
+      .samples {
+        max-height: 180px;
+        min-height: 0;
+        padding-inline: 12px;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
     }
 
     @media (max-width: 520px) {
@@ -1775,7 +1902,7 @@ fn web_app_html() -> &'static str {
         grid-template-columns: 1fr;
       }
       .field.inline-setting {
-        grid-template-columns: auto minmax(5rem, 1fr);
+        grid-template-columns: auto minmax(4.5rem, 6rem);
       }
       .prediction {
         grid-template-columns: 1fr;
@@ -1786,7 +1913,7 @@ fn web_app_html() -> &'static str {
       .graph-head {
         display: grid;
         min-height: 0;
-        padding: 14px 16px;
+        padding: 12px 16px;
       }
       .graph-meta {
         justify-content: space-between;
@@ -1864,18 +1991,6 @@ fn web_app_html() -> &'static str {
               </div>
               <div class="target" id="targetMeta">30s</div>
             </div>
-
-            <div class="shot-actions">
-              <button class="button sample-action" id="openSampleButton" type="button">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M6 2v2"/>
-                  <path d="M10 2v2"/>
-                  <path d="M14 2v2"/>
-                  <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/>
-                </svg>
-                <span>Add Shot</span>
-              </button>
-            </div>
           </div>
         </section>
       </div>
@@ -1905,12 +2020,27 @@ fn web_app_html() -> &'static str {
             </button>
           </div>
         </div>
-        <div class="graph-wrap" id="graphWrap">
-          <div class="empty">--</div>
-        </div>
-        <div class="samples">
-          <div class="meta" id="sampleMeta"></div>
-          <div class="sample-list" id="sampleList"></div>
+        <div class="graph-body">
+          <div class="graph-wrap" id="graphWrap">
+            <div class="empty">--</div>
+          </div>
+          <div class="samples">
+            <div class="samples-head">
+              <div class="meta" id="sampleMeta"></div>
+              <button class="icon-button add-sample-button" id="openSampleButton" type="button" aria-label="Add shot">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14"/>
+                  <path d="M5 12h14"/>
+                </svg>
+              </button>
+            </div>
+            <div class="sample-list-head" aria-hidden="true">
+              <span>Time</span>
+              <span>Grind</span>
+              <span></span>
+            </div>
+            <div class="sample-list" id="sampleList"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -2061,7 +2191,11 @@ fn web_app_html() -> &'static str {
         els.predictionBox.dataset.predictedGrind = "";
         els.predictionBox.classList.remove("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
-        els.graphWrap.innerHTML = `<div class="empty">--</div>`;
+        if (prediction?.graph_error) {
+          els.graphWrap.innerHTML = `<div class="graph-error"><strong>Graph unavailable</strong><span>${escapeHtml(prediction.graph_error)}</span></div>`;
+        } else {
+          els.graphWrap.innerHTML = `<div class="empty">--</div>`;
+        }
       }
 
       renderSamples(recipe);
@@ -2086,11 +2220,16 @@ fn web_app_html() -> &'static str {
         els.sampleMeta.textContent = "";
         return;
       }
-      els.sampleMeta.textContent = "";
+      const sampleCount = Number(recipe.sample_count);
+      els.sampleMeta.textContent = sampleCount === 1 ? "1 logged shot" : `${sampleCount} logged shots`;
+      if (sampleCount === 0) {
+        els.sampleList.innerHTML = `<div class="empty">No shots yet</div>`;
+        return;
+      }
       for (const sample of [...recipe.samples].reverse()) {
         const row = document.createElement("div");
         row.className = "sample";
-        row.innerHTML = `<div class="sample-values"><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>${escapeHtml(sample.time)}</span><span class="metric-label">time</span></span><span class="sample-metric"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/></svg><span>${escapeHtml(sample.grind)}</span><span class="metric-label">grind</span></span></div><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
+        row.innerHTML = `<span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>${escapeHtml(sample.time)}</span></span><span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/></svg><span>${escapeHtml(sample.grind)}</span></span><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
         els.sampleList.append(row);
       }
     }
@@ -2517,28 +2656,58 @@ fn local_model_points(
     local
 }
 
-fn grind_axis_bounds(points: &[(f64, f64)]) -> (f64, f64) {
-    let mut min = points
+fn grind_axis_bounds_with_focus(points: &[(f64, f64)], focus_grind: Option<f64>) -> (f64, f64) {
+    let sample_min = points
         .iter()
         .map(|(grind, _)| *grind)
-        .fold(f64::INFINITY, f64::min)
-        .floor();
-    let mut max = points
+        .chain(focus_grind.filter(|value| value.is_finite()))
+        .fold(f64::INFINITY, f64::min);
+    let sample_max = points
         .iter()
         .map(|(grind, _)| *grind)
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil();
+        .chain(focus_grind.filter(|value| value.is_finite()))
+        .fold(f64::NEG_INFINITY, f64::max);
 
-    if !min.is_finite() || !max.is_finite() {
+    if !sample_min.is_finite() || !sample_max.is_finite() {
         return (1.0, 40.0);
     }
 
-    if min == max {
-        min -= 1.0;
-        max += 1.0;
+    if sample_min == sample_max {
+        return ((sample_min - 1.0).max(1.0), (sample_max + 1.0).min(40.0));
+    }
+
+    let padding = ((sample_max - sample_min) * 0.1).max(1.0);
+    let mut min = (sample_min - padding).floor();
+    let mut max = (sample_max + padding).ceil();
+    if focus_grind.is_none_or(|value| value >= 1.0) {
+        min = min.max(1.0);
+    }
+    if focus_grind.is_none_or(|value| value <= 40.0) {
+        max = max.min(40.0);
     }
 
     (min, max)
+}
+
+fn shot_time_axis_bounds(target_seconds: f64) -> (f64, f64) {
+    let mut min: f64 = 0.0;
+    let mut max: f64 = 60.0;
+
+    if target_seconds.is_finite() {
+        if target_seconds < min {
+            let padding = ((max - target_seconds) * 0.08).max(2.0);
+            min = (target_seconds - padding).floor();
+        } else if target_seconds > max {
+            let padding = ((target_seconds - min) * 0.08).max(2.0);
+            max = (target_seconds + padding).ceil();
+        }
+    }
+
+    if min == max {
+        (min - 1.0, max + 1.0)
+    } else {
+        (min, max)
+    }
 }
 
 fn axis_ticks(min: f64, max: f64) -> Vec<f64> {
@@ -2571,16 +2740,15 @@ fn render_graph_svg(
     model_r2: f64,
 ) -> String {
     let width = 960.0;
-    let height = 560.0;
-    let left = 84.0;
-    let right = 34.0;
-    let top = 74.0;
-    let bottom = 74.0;
+    let height = 760.0;
+    let left = 74.0;
+    let right = 14.0;
+    let top = 10.0;
+    let bottom = 34.0;
     let plot_width = width - left - right;
     let plot_height = height - top - bottom;
-    let (x_min, x_max) = grind_axis_bounds(points);
-    let y_min = 0.0;
-    let y_max = 60.0;
+    let (x_min, x_max) = grind_axis_bounds_with_focus(points, Some(predicted_grind));
+    let (y_min, y_max) = shot_time_axis_bounds(target_seconds);
     let model_y_at_min = intercept + (slope * x_min);
     let model_y_at_max = intercept + (slope * x_max);
 
@@ -2594,8 +2762,8 @@ fn render_graph_svg(
     let target_y = y(target_seconds);
     let predicted_x = x(predicted_grind);
     let title = svg_escape(&recipe.name);
-    let subtitle = svg_escape(&format!(
-        "dose {}g - shot {}g - time = {} + {} * grind - R2 {}",
+    let desc = svg_escape(&format!(
+        "Dose {}g, shot {}g, time = {} + {} * grind, R2 {}.",
         recipe.dose_weight_g,
         recipe.shot_weight_g,
         fmt(intercept),
@@ -2607,10 +2775,8 @@ fn render_graph_svg(
     svg.push_str(&format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0}" height="{height:.0}" viewBox="0 0 {width:.0} {height:.0}" role="img" aria-labelledby="title desc">
 <title id="title">Shot time vs grind for {title}</title>
-<desc id="desc">Coffee recipe graph showing recorded shots and Theil-Sen prediction line.</desc>
+<desc id="desc">{desc}</desc>
 <rect width="100%" height="100%" fill="#15181d"/>
-<text x="{left:.0}" y="34" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#f8fafc">{title}</text>
-<text x="{left:.0}" y="58" font-family="Arial, sans-serif" font-size="13" fill="#94a3b8">{subtitle}</text>
 <rect x="{left:.0}" y="{top:.0}" width="{plot_width:.0}" height="{plot_height:.0}" fill="#1b2027" stroke="#343a42"/>
 <clipPath id="plot-area"><rect x="{left:.0}" y="{top:.0}" width="{plot_width:.0}" height="{plot_height:.0}"/></clipPath>
 "##
@@ -2621,12 +2787,12 @@ fn render_graph_svg(
         svg.push_str(&format!(
             r##"<line x1="{tick_x:.2}" y1="{top:.2}" x2="{tick_x:.2}" y2="{:.2}" stroke="#243044"/>
 <line x1="{tick_x:.2}" y1="{:.2}" x2="{tick_x:.2}" y2="{:.2}" stroke="#64748b"/>
-<text x="{tick_x:.2}" y="{:.2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#cbd5e1">{}</text>
+<text x="{tick_x:.2}" y="{:.2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="800" fill="#dbe7f5">{}</text>
 "##,
             top + plot_height,
             top + plot_height,
             top + plot_height + 6.0,
-            top + plot_height + 24.0,
+            top + plot_height + 27.0,
             axis_label(tick)
         ));
     }
@@ -2637,12 +2803,12 @@ fn render_graph_svg(
         svg.push_str(&format!(
             r##"<line x1="{left:.2}" y1="{tick_y:.2}" x2="{:.2}" y2="{tick_y:.2}" stroke="#243044"/>
 <line x1="{:.2}" y1="{tick_y:.2}" x2="{left:.2}" y2="{tick_y:.2}" stroke="#64748b"/>
-<text x="{:.2}" y="{:.2}" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#cbd5e1">{}s</text>
+<text x="{:.2}" y="{:.2}" text-anchor="end" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#dbe7f5">{}s</text>
 "##,
             left + plot_width,
             left - 6.0,
-            left - 12.0,
-            tick_y + 4.0,
+            left - 8.0,
+            tick_y + 6.0,
             fmt(tick)
         ));
     }
@@ -2655,7 +2821,7 @@ fn render_graph_svg(
         left + plot_width
     ));
 
-    if (x_min..=x_max).contains(&predicted_grind) {
+    if predicted_grind.is_finite() {
         svg.push_str(&format!(
             r##"<line x1="{predicted_x:.2}" y1="{top:.2}" x2="{predicted_x:.2}" y2="{:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
 <circle cx="{predicted_x:.2}" cy="{target_y:.2}" r="6" fill="#a6e22e" stroke="#15181d" stroke-width="2"/>
@@ -2682,16 +2848,7 @@ fn render_graph_svg(
     }
     svg.push_str("</g>\n");
 
-    svg.push_str(&format!(
-        r##"<text x="{:.2}" y="{:.2}" font-family="Arial, sans-serif" font-size="13" fill="#e2e8f0">grind setting</text>
-<text x="22" y="{:.2}" transform="rotate(-90 22 {:.2})" font-family="Arial, sans-serif" font-size="13" fill="#e2e8f0">shot time seconds</text>
-</svg>
-"##,
-        left + (plot_width / 2.0) - 34.0,
-        height - 18.0,
-        top + (plot_height / 2.0) + 56.0,
-        top + (plot_height / 2.0) + 56.0
-    ));
+    svg.push_str("</svg>\n");
 
     svg
 }
@@ -2887,7 +3044,37 @@ mod tests {
     fn grind_axis_matches_sample_extent() {
         let points = vec![(12.2, 40.0), (18.7, 25.0)];
 
-        assert_eq!(grind_axis_bounds(&points), (12.0, 19.0));
+        assert_eq!(grind_axis_bounds_with_focus(&points, None), (11.0, 20.0));
+    }
+
+    #[test]
+    fn grind_axis_includes_predicted_goal_marker() {
+        let points = vec![(12.2, 40.0), (18.7, 25.0)];
+
+        let (min, max) = grind_axis_bounds_with_focus(&points, Some(-5.0));
+
+        assert!(min < -5.0);
+        assert!(max > 18.7);
+    }
+
+    #[test]
+    fn shot_time_axis_includes_target_marker() {
+        assert_eq!(shot_time_axis_bounds(30.0), (0.0, 60.0));
+
+        let (_, high_max) = shot_time_axis_bounds(90.0);
+        let (low_min, _) = shot_time_axis_bounds(-5.0);
+
+        assert!(high_max > 90.0);
+        assert!(low_min < -5.0);
+    }
+
+    #[test]
+    fn theil_sen_fit_error_distinguishes_insufficient_data_from_fit_failure() {
+        assert!(theil_sen_fit_error(&[(12.0, 30.0)]).is_none());
+
+        let error = theil_sen_fit_error(&[(12.0, 30.0), (12.0, 35.0)]).expect("fit error");
+
+        assert!(error.contains("same grind setting"));
     }
 
     #[test]
