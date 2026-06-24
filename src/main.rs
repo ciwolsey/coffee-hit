@@ -113,6 +113,7 @@ fn print_usage() {
   ./coffee.sh recipes
   ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G --shot-weight SHOT_WEIGHT_G
   ./coffee.sh sample --recipe RECIPE --time SHOT_TIME --grind GRIND
+  ./coffee.sh sample --recipe RECIPE --grind GRIND --choked
   ./coffee.sh predict --recipe RECIPE --time TARGET_SHOT_TIME
   ./coffee.sh graph --recipe RECIPE --time TARGET_SHOT_TIME [--output graph.svg]
   ./coffee.sh serve [--host HOST] [--port 9000]
@@ -123,7 +124,8 @@ Recipes are stored in coffee_recipes.tsv as:
 
 Rows with record_type \"recipe\" define recipes and their fixed dose and shot
 weight in grams.
-Rows with record_type \"sample\" define shot samples for a recipe. Grind is a
+Rows with record_type \"sample\" define shot samples for a recipe. A shot time
+of 0s marks a choked shot and is excluded from regression. Grind is a
 numeric grinder setting from 1 (finest) to 40 (very coarse)."
     );
 }
@@ -134,6 +136,7 @@ fn print_usage_to_stderr() {
   ./coffee.sh recipes
   ./coffee.sh add --recipe RECIPE --dose DOSE_WEIGHT_G --shot-weight SHOT_WEIGHT_G
   ./coffee.sh sample --recipe RECIPE --time SHOT_TIME --grind GRIND
+  ./coffee.sh sample --recipe RECIPE --grind GRIND --choked
   ./coffee.sh predict --recipe RECIPE --time TARGET_SHOT_TIME
   ./coffee.sh graph --recipe RECIPE --time TARGET_SHOT_TIME [--output graph.svg]
   ./coffee.sh serve [--host HOST] [--port 9000]
@@ -234,12 +237,14 @@ fn add_sample(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut recipe = None;
     let mut grind = None;
     let mut shot_time = None;
+    let mut choked = false;
 
     while let Some(arg) = parser.next() {
         match arg {
             "--recipe" | "--name" => recipe = Some(parser.require_value(arg)?.to_string()),
             "--grind" => grind = Some(numeric_plain(parser.require_value(arg)?)),
             "--time" => shot_time = Some(numeric_time(parser.require_value(arg)?)),
+            "--choked" => choked = true,
             "-h" | "--help" => {
                 print_usage();
                 return Ok(());
@@ -261,10 +266,21 @@ fn add_sample(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>> {
         print_usage_to_stderr();
         AppError::new("Sample requires --recipe, --grind, and --time")
     })?;
-    let shot_time = shot_time.ok_or_else(|| {
+    if choked && shot_time.is_some() {
         print_usage_to_stderr();
-        AppError::new("Sample requires --recipe, --grind, and --time")
-    })?;
+        return Err(Box::new(AppError::new(
+            "Choked samples record time as 0s and do not accept --time",
+        )));
+    }
+
+    let shot_time = if choked {
+        "0".to_string()
+    } else {
+        shot_time.ok_or_else(|| {
+            print_usage_to_stderr();
+            AppError::new("Sample requires --recipe, --grind, and --time")
+        })?
+    };
 
     reject_tabs("recipe", &recipe)?;
     reject_tabs("grind", &grind)?;
@@ -352,6 +368,9 @@ fn predict_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error
             continue;
         }
         let shot_time = parse_number(&shot_time);
+        if shot_time == 0.0 {
+            continue;
+        }
         let grind = numeric_value(&sample.grind);
         if is_number(&grind) {
             grind_points.push((parse_number(&grind), shot_time));
@@ -458,6 +477,7 @@ fn graph_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>>
 
     let points = numeric_grind_points(recipe);
     let model_points = local_model_points(&points, target_seconds, LOCAL_MODEL_SAMPLE_LIMIT);
+    let choke_grinds = choked_grinds(recipe);
     let (intercept, slope) = theil_sen_model(&model_points).ok_or_else(|| {
         AppError::new("Graph requires at least two samples with varying numeric grind values")
     })?;
@@ -467,6 +487,7 @@ fn graph_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error>>
         recipe,
         &points,
         &model_points,
+        &choke_grinds,
         target_seconds,
         predicted_grind,
         intercept,
@@ -736,11 +757,16 @@ fn add_sample_from_form(
         .ok_or_else(|| AppError::new("Choose a recipe first"))?
         .trim()
         .to_string();
-    let shot_time = numeric_time(
-        form_value(params, "time")
-            .ok_or_else(|| AppError::new("Shot time is required"))?
-            .trim(),
-    );
+    let choked = form_value(params, "choked").is_some_and(|value| value == "1");
+    let shot_time = if choked {
+        "0".to_string()
+    } else {
+        numeric_time(
+            form_value(params, "time")
+                .ok_or_else(|| AppError::new("Shot time is required"))?
+                .trim(),
+        )
+    };
     let grind = numeric_plain(
         form_value(params, "grind")
             .ok_or_else(|| AppError::new("Grind is required"))?
@@ -889,6 +915,12 @@ fn recipe_json(recipe: &Recipe) -> String {
         json_string_into(&mut json, &sample.time);
         json.push_str(",\"grind\":");
         json_string_into(&mut json, &sample.grind);
+        json.push_str(",\"choked\":");
+        json.push_str(if is_choked_sample(sample) {
+            "true"
+        } else {
+            "false"
+        });
         json.push('}');
     }
     json.push_str("]}");
@@ -898,6 +930,7 @@ fn recipe_json(recipe: &Recipe) -> String {
 fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
     let points = numeric_grind_points(recipe);
     let model_points = local_model_points(&points, target_seconds, LOCAL_MODEL_SAMPLE_LIMIT);
+    let choke_grinds = choked_grinds(recipe);
     let nearest = nearest_sample(recipe, target_seconds);
     let mut json = String::new();
     json.push('{');
@@ -926,6 +959,7 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
             recipe,
             &points,
             &model_points,
+            &choke_grinds,
             target_seconds,
             predicted_grind,
             intercept,
@@ -1015,7 +1049,7 @@ fn nearest_sample(recipe: &Recipe, target_seconds: f64) -> Option<(&Sample, f64)
         .iter()
         .filter_map(|sample| {
             let shot_time = numeric_value(&sample.time);
-            if is_number(&shot_time) {
+            if is_number(&shot_time) && parse_number(&shot_time) > 0.0 {
                 let seconds = parse_number(&shot_time);
                 Some((sample, (seconds - target_seconds).abs()))
             } else {
@@ -1741,6 +1775,13 @@ fn web_app_html() -> &'static str {
     .legend-dot.is-sample { color: #64748b; }
     .legend-dot.is-model { color: #2dd4bf; }
 
+    .legend-zone {
+      width: 20px;
+      height: 10px;
+      border-left: 3px dotted var(--danger);
+      background: rgba(255, 77, 109, 0.16);
+    }
+
     .graph-wrap {
       min-height: 280px;
       padding: 8px 10px 10px;
@@ -1846,6 +1887,17 @@ fn web_app_html() -> &'static str {
     .sample .icon-button {
       width: 34px;
       height: 34px;
+    }
+
+    .sample.is-choked {
+      border-color: var(--danger-line);
+      background:
+        linear-gradient(rgba(255, 77, 109, 0.08), rgba(255, 77, 109, 0.08)),
+        var(--panel-2);
+    }
+
+    .sample.is-choked .sample-cell:first-child {
+      color: var(--danger-text);
     }
 
     dialog.modal {
@@ -1962,6 +2014,28 @@ fn web_app_html() -> &'static str {
     .model-choice-button.curve-model.is-selected {
       border-color: rgba(251, 191, 36, 0.88);
       box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.16);
+    }
+
+    .toggle-field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 48px;
+      padding: 0 13px;
+      border: 1px solid var(--danger-line);
+      border-radius: 8px;
+      background: var(--danger-bg);
+    }
+
+    .toggle-field label {
+      color: var(--danger-text);
+    }
+
+    .toggle-field input {
+      width: 22px;
+      min-height: 22px;
+      accent-color: var(--danger);
     }
 
     .empty, .status {
@@ -2201,6 +2275,7 @@ fn web_app_html() -> &'static str {
               <span class="legend-item"><span class="legend-line is-target"></span> Target</span>
               <span class="legend-item"><span class="legend-dot is-model"></span> Model shots</span>
               <span class="legend-item"><span class="legend-dot is-sample"></span> Other shots</span>
+              <span class="legend-item"><span class="legend-zone"></span> Choke</span>
             </div>
             <div class="graph-wrap" id="graphWrap">
               <div class="empty">--</div>
@@ -2278,6 +2353,10 @@ fn web_app_html() -> &'static str {
         <label for="shotTime">Shot time</label>
         <input id="shotTime" name="time" inputmode="decimal" autocomplete="off" required>
       </div>
+      <div class="toggle-field">
+        <label for="chokedShot">Choked</label>
+        <input id="chokedShot" name="choked" type="checkbox" value="1">
+      </div>
       <div class="field manual-grind-field" id="manualGrindField">
         <label for="grind">Grind</label>
         <input id="grind" name="grind" inputmode="decimal" autocomplete="off" required>
@@ -2319,6 +2398,7 @@ fn web_app_html() -> &'static str {
       predictionBox: document.querySelector("#predictionBox"),
       targetMeta: document.querySelector("#targetMeta"),
       shotTime: document.querySelector("#shotTime"),
+      chokedShot: document.querySelector("#chokedShot"),
       grind: document.querySelector("#grind"),
       graphWrap: document.querySelector("#graphWrap"),
       graphTitle: document.querySelector("#graphTitle"),
@@ -2436,8 +2516,9 @@ fn web_app_html() -> &'static str {
       }
       for (const sample of [...recipe.samples].reverse()) {
         const row = document.createElement("div");
-        row.className = "sample";
-        row.innerHTML = `<span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>${escapeHtml(sample.time)}</span></span><span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/></svg><span>${escapeHtml(sample.grind)}</span></span><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${sample.time} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
+        const timeLabel = sample.choked ? "Choked" : sample.time;
+        row.className = sample.choked ? "sample is-choked" : "sample";
+        row.innerHTML = `<span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>${escapeHtml(timeLabel)}</span></span><span class="sample-cell"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.34 19a10 10 0 1 1 17.32 0"/><path d="m12 14 4-4"/></svg><span>${escapeHtml(sample.grind)}</span></span><button class="icon-button danger delete-sample" type="button" data-sample-index="${sample.index}" data-sample-label="${escapeHtml(`${timeLabel} at grind ${sample.grind}`)}" aria-label="Delete shot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button>`;
         els.sampleList.append(row);
       }
     }
@@ -2489,8 +2570,19 @@ fn web_app_html() -> &'static str {
       els.curveModelButton.setAttribute("aria-pressed", "false");
     }
 
+    function syncChokedShot() {
+      const choked = els.chokedShot.checked;
+      els.shotTime.required = !choked;
+      els.shotTime.disabled = choked;
+      if (choked) {
+        els.shotTime.value = "";
+      }
+    }
+
     function openManualSampleDialog() {
       els.sampleForm.classList.remove("is-model-choice");
+      els.chokedShot.checked = false;
+      syncChokedShot();
       els.grind.required = true;
       resetModelChoice();
       fillPredictedGrind();
@@ -2505,6 +2597,7 @@ fn web_app_html() -> &'static str {
       }
 
       els.sampleForm.reset();
+      syncChokedShot();
       els.grind.required = false;
       els.grind.value = "";
       resetModelChoice();
@@ -2558,6 +2651,7 @@ fn web_app_html() -> &'static str {
 
     els.linearModelButton.addEventListener("click", () => chooseModelGrind(els.linearModelButton));
     els.curveModelButton.addEventListener("click", () => chooseModelGrind(els.curveModelButton));
+    els.chokedShot.addEventListener("change", syncChokedShot);
 
     document.querySelectorAll("[data-close-dialog]").forEach(button => {
       button.addEventListener("click", () => {
@@ -2622,6 +2716,7 @@ fn web_app_html() -> &'static str {
           recipe: state.selectedRecipe,
           time: els.shotTime.value,
           grind: els.grind.value,
+          choked: els.chokedShot.checked ? "1" : "0",
           target_time: els.targetTime.value
         });
         const data = await api("/api/samples", {
@@ -2630,6 +2725,7 @@ fn web_app_html() -> &'static str {
           body
         });
         event.target.reset();
+        syncChokedShot();
         els.sampleForm.classList.remove("is-model-choice");
         els.grind.required = true;
         resetModelChoice();
@@ -2884,6 +2980,11 @@ fn fmt(value: f64) -> String {
     format!("{value:.2}")
 }
 
+fn is_choked_sample(sample: &Sample) -> bool {
+    let shot_time = numeric_value(&sample.time);
+    is_number(&shot_time) && parse_number(&shot_time) == 0.0
+}
+
 fn numeric_grind_points(recipe: &Recipe) -> Vec<(f64, f64)> {
     recipe
         .samples
@@ -2891,11 +2992,22 @@ fn numeric_grind_points(recipe: &Recipe) -> Vec<(f64, f64)> {
         .filter_map(|sample| {
             let grind = numeric_value(&sample.grind);
             let shot_time = numeric_value(&sample.time);
-            if is_number(&grind) && is_number(&shot_time) {
+            if is_number(&grind) && is_number(&shot_time) && parse_number(&shot_time) > 0.0 {
                 Some((parse_number(&grind), parse_number(&shot_time)))
             } else {
                 None
             }
+        })
+        .collect()
+}
+
+fn choked_grinds(recipe: &Recipe) -> Vec<f64> {
+    recipe
+        .samples
+        .iter()
+        .filter_map(|sample| {
+            let grind = numeric_value(&sample.grind);
+            (is_choked_sample(sample) && is_number(&grind)).then(|| parse_number(&grind))
         })
         .collect()
 }
@@ -2918,15 +3030,21 @@ fn local_model_points(
     local
 }
 
-fn grind_axis_bounds_with_focus(points: &[(f64, f64)], focus_grind: Option<f64>) -> (f64, f64) {
+fn grind_axis_bounds_with_markers(
+    points: &[(f64, f64)],
+    marker_grinds: &[f64],
+    focus_grind: Option<f64>,
+) -> (f64, f64) {
     let sample_min = points
         .iter()
         .map(|(grind, _)| *grind)
+        .chain(marker_grinds.iter().copied().filter(|value| value.is_finite()))
         .chain(focus_grind.filter(|value| value.is_finite()))
         .fold(f64::INFINITY, f64::min);
     let sample_max = points
         .iter()
         .map(|(grind, _)| *grind)
+        .chain(marker_grinds.iter().copied().filter(|value| value.is_finite()))
         .chain(focus_grind.filter(|value| value.is_finite()))
         .fold(f64::NEG_INFINITY, f64::max);
 
@@ -2995,6 +3113,7 @@ fn render_graph_svg(
     recipe: &Recipe,
     points: &[(f64, f64)],
     model_points: &[(f64, f64)],
+    choke_grinds: &[f64],
     target_seconds: f64,
     predicted_grind: f64,
     intercept: f64,
@@ -3009,7 +3128,7 @@ fn render_graph_svg(
     let bottom = 34.0;
     let plot_width = width - left - right;
     let plot_height = height - top - bottom;
-    let (x_min, x_max) = grind_axis_bounds_with_focus(points, Some(predicted_grind));
+    let (x_min, x_max) = grind_axis_bounds_with_markers(points, choke_grinds, Some(predicted_grind));
     let (y_min, y_max) = shot_time_axis_bounds(target_seconds);
     let model_y_at_min = intercept + (slope * x_min);
     let model_y_at_max = intercept + (slope * x_max);
@@ -3078,7 +3197,34 @@ fn render_graph_svg(
 
     svg.push_str(&format!(
         r##"<g clip-path="url(#plot-area)">
-<line x1="{left:.2}" y1="{target_y:.2}" x2="{:.2}" y2="{target_y:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
+"##
+    ));
+
+    if let Some(choke_limit) = choke_grinds
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .max_by(|left, right| left.total_cmp(right))
+    {
+        let shade_x = x(choke_limit).clamp(left, left + plot_width);
+        let shade_width = (shade_x - left).max(0.0);
+        svg.push_str(&format!(
+            r##"<rect x="{left:.2}" y="{top:.2}" width="{shade_width:.2}" height="{plot_height:.2}" fill="#ff4d6d" opacity="0.08"/>
+"##
+        ));
+    }
+
+    for choke_grind in choke_grinds.iter().copied().filter(|value| value.is_finite()) {
+        let choke_x = x(choke_grind);
+        svg.push_str(&format!(
+            r##"<line x1="{choke_x:.2}" y1="{top:.2}" x2="{choke_x:.2}" y2="{:.2}" stroke="#ff4d6d" stroke-width="3" stroke-dasharray="2 8" opacity="0.82"/>
+"##,
+            top + plot_height
+        ));
+    }
+
+    svg.push_str(&format!(
+        r##"<line x1="{left:.2}" y1="{target_y:.2}" x2="{:.2}" y2="{target_y:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
 "##,
         left + plot_width
     ));
@@ -3353,14 +3499,14 @@ mod tests {
     fn grind_axis_matches_sample_extent() {
         let points = vec![(12.2, 40.0), (18.7, 25.0)];
 
-        assert_eq!(grind_axis_bounds_with_focus(&points, None), (11.0, 20.0));
+        assert_eq!(grind_axis_bounds_with_markers(&points, &[], None), (11.0, 20.0));
     }
 
     #[test]
     fn grind_axis_includes_predicted_goal_marker() {
         let points = vec![(12.2, 40.0), (18.7, 25.0)];
 
-        let (min, max) = grind_axis_bounds_with_focus(&points, Some(-5.0));
+        let (min, max) = grind_axis_bounds_with_markers(&points, &[], Some(-5.0));
 
         assert!(min < -5.0);
         assert!(max > 18.7);
@@ -3397,6 +3543,30 @@ mod tests {
     }
 
     #[test]
+    fn choked_samples_are_markers_not_model_points() {
+        let recipe = Recipe {
+            name: "Test".to_string(),
+            dose_weight_g: "18".to_string(),
+            shot_weight_g: "36".to_string(),
+            samples: vec![
+                Sample {
+                    recipe: "Test".to_string(),
+                    time: "0s".to_string(),
+                    grind: "8".to_string(),
+                },
+                Sample {
+                    recipe: "Test".to_string(),
+                    time: "28s".to_string(),
+                    grind: "12".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(numeric_grind_points(&recipe), vec![(12.0, 28.0)]);
+        assert_eq!(choked_grinds(&recipe), vec![8.0]);
+    }
+
+    #[test]
     fn graph_svg_contains_prediction_context() {
         let recipe = Recipe {
             name: "Test & Espresso".to_string(),
@@ -3407,13 +3577,25 @@ mod tests {
         let points = vec![(16.0, 25.0), (20.0, 35.0)];
         let model_points = points.clone();
 
-        let svg = render_graph_svg(&recipe, &points, &model_points, 30.0, 18.0, -15.0, 2.5, 1.0);
+        let svg = render_graph_svg(
+            &recipe,
+            &points,
+            &model_points,
+            &[11.0],
+            30.0,
+            18.0,
+            -15.0,
+            2.5,
+            1.0,
+        );
 
         assert!(svg.contains("<svg"));
         assert!(svg.contains("Test &amp; Espresso"));
         assert!(svg.contains("stroke=\"#60a5fa\""));
         assert!(svg.contains("stroke=\"#fbbf24\""));
         assert!(svg.contains("stroke-dasharray=\"3 9\""));
+        assert!(svg.contains("fill=\"#ff4d6d\""));
+        assert!(svg.contains("stroke=\"#ff4d6d\""));
         assert!(!svg.contains("local Theil-Sen line"));
         assert!(svg.contains(">60.00s</text>"));
     }
