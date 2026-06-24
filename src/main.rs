@@ -3200,12 +3200,13 @@ fn render_graph_svg(
 "##
     ));
 
-    if let Some(choke_limit) = choke_grinds
+    let choke_limit = choke_grinds
         .iter()
         .copied()
         .filter(|value| value.is_finite())
-        .max_by(|left, right| left.total_cmp(right))
-    {
+        .max_by(|left, right| left.total_cmp(right));
+
+    if let Some(choke_limit) = choke_limit {
         let shade_x = x(choke_limit).clamp(left, left + plot_width);
         let shade_width = (shade_x - left).max(0.0);
         svg.push_str(&format!(
@@ -3214,8 +3215,8 @@ fn render_graph_svg(
         ));
     }
 
-    for choke_grind in choke_grinds.iter().copied().filter(|value| value.is_finite()) {
-        let choke_x = x(choke_grind);
+    if let Some(choke_limit) = choke_limit {
+        let choke_x = x(choke_limit);
         svg.push_str(&format!(
             r##"<line x1="{choke_x:.2}" y1="{top:.2}" x2="{choke_x:.2}" y2="{:.2}" stroke="#ff4d6d" stroke-width="3" stroke-dasharray="2 8" opacity="0.82"/>
 "##,
