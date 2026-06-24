@@ -377,6 +377,16 @@ fn predict_recipe(data_file: &Path, args: &[String]) -> Result<(), Box<dyn Error
     }
 
     let predictions = report_prediction("grind", "", &model_points, target_seconds);
+    if let Some(curve_grind) = exponential_predicted_grind(&model_points, target_seconds) {
+        println!("curve_grind: {}", fmt(curve_grind));
+        if let Some((log_intercept, log_slope)) = exponential_time_model(&model_points) {
+            println!(
+                "curve_model: ln(time) = {} + {} * grind",
+                fmt(log_intercept),
+                fmt(log_slope)
+            );
+        }
+    }
 
     if non_numeric_grind > 0 && grind_points.len() < 2 {
         println!("grind_note: grind regression requires at least two numeric grind settings");
@@ -910,6 +920,7 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
 
     if let Some((intercept, slope)) = theil_sen_model(&model_points) {
         let predicted_grind = (target_seconds - intercept) / slope;
+        let curve_grind = exponential_predicted_grind(&model_points, target_seconds);
         let model_r2 = r_squared(&model_points, intercept, slope);
         let svg = render_graph_svg(
             recipe,
@@ -923,6 +934,25 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
         );
         json.push_str(",\"grind\":");
         json.push_str(&fmt(predicted_grind));
+        json.push_str(",\"curve_grind\":");
+        if let Some(curve_grind) = curve_grind {
+            json.push_str(&fmt(curve_grind));
+        } else {
+            json.push_str("null");
+        }
+        json.push_str(",\"curve_model\":");
+        if let Some((log_intercept, log_slope)) = exponential_time_model(&model_points) {
+            json_string_into(
+                &mut json,
+                &format!(
+                    "ln(time) = {} + {} * grind",
+                    fmt(log_intercept),
+                    fmt(log_slope)
+                ),
+            );
+        } else {
+            json.push_str("null");
+        }
         json.push_str(",\"r_squared\":");
         json.push_str(&fmt(model_r2));
         json.push_str(",\"model\":\"time = ");
@@ -935,7 +965,7 @@ fn prediction_json(recipe: &Recipe, target_seconds: f64) -> String {
         json.push_str(",\"graph_error\":null");
         json.push_str(",\"note\":null");
     } else {
-        json.push_str(",\"grind\":null,\"r_squared\":null,\"model\":null,\"graph_svg\":null");
+        json.push_str(",\"grind\":null,\"curve_grind\":null,\"curve_model\":null,\"r_squared\":null,\"model\":null,\"graph_svg\":null");
         json.push_str(",\"graph_error\":");
         if let Some(error) = theil_sen_fit_error(&model_points) {
             json_string_into(&mut json, &error);
@@ -1544,6 +1574,14 @@ fn web_app_html() -> &'static str {
       letter-spacing: 0;
     }
 
+    .prediction .curve-grind {
+      margin-top: 8px;
+      color: #fbbf24;
+      font-size: 1.02rem;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
     .prediction .target {
       color: var(--goal);
       font-weight: 800;
@@ -1644,6 +1682,64 @@ fn web_app_html() -> &'static str {
       height: 560px;
       min-height: 0;
     }
+
+    .graph-main {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
+      background: #15181d;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      min-height: 38px;
+      padding: 8px 12px 4px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .legend-line {
+      width: 24px;
+      height: 0;
+      border-top: 3px solid currentColor;
+      border-radius: 999px;
+    }
+
+    .legend-line.is-solid { color: #60a5fa; }
+    .legend-line.is-dotted {
+      width: 28px;
+      border-top-style: dotted;
+      color: #fbbf24;
+    }
+    .legend-line.is-target {
+      width: 28px;
+      border-top-style: dashed;
+      color: #a6e22e;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 2px #0f172a;
+    }
+
+    .legend-dot.is-sample { color: #64748b; }
+    .legend-dot.is-model { color: #2dd4bf; }
 
     .graph-wrap {
       min-height: 280px;
@@ -1883,6 +1979,11 @@ fn web_app_html() -> &'static str {
         grid-template-columns: 1fr;
         height: auto;
       }
+      .graph-legend {
+        gap: 7px 10px;
+        min-height: 0;
+        padding: 8px 10px 2px;
+      }
       .graph-wrap { padding: 6px; }
       .graph-wrap svg {
         height: auto;
@@ -1986,8 +2087,9 @@ fn web_app_html() -> &'static str {
 
             <div class="prediction" id="predictionBox">
               <div>
-                <div class="label">Next grind</div>
+                <div class="label">Linear grind</div>
                 <div class="grind" id="predictedGrind">--</div>
+                <div class="curve-grind" id="curveGrind">Curve --</div>
               </div>
               <div class="target" id="targetMeta">30s</div>
             </div>
@@ -2021,8 +2123,17 @@ fn web_app_html() -> &'static str {
           </div>
         </div>
         <div class="graph-body">
-          <div class="graph-wrap" id="graphWrap">
-            <div class="empty">--</div>
+          <div class="graph-main">
+            <div class="graph-legend" aria-label="Graph legend">
+              <span class="legend-item"><span class="legend-line is-solid"></span> Linear</span>
+              <span class="legend-item"><span class="legend-line is-dotted"></span> Curve</span>
+              <span class="legend-item"><span class="legend-line is-target"></span> Target</span>
+              <span class="legend-item"><span class="legend-dot is-model"></span> Model shots</span>
+              <span class="legend-item"><span class="legend-dot is-sample"></span> Other shots</span>
+            </div>
+            <div class="graph-wrap" id="graphWrap">
+              <div class="empty">--</div>
+            </div>
           </div>
           <div class="samples">
             <div class="samples-head">
@@ -2120,6 +2231,7 @@ fn web_app_html() -> &'static str {
       recipeSelect: document.querySelector("#recipeSelect"),
       targetTime: document.querySelector("#targetTime"),
       predictedGrind: document.querySelector("#predictedGrind"),
+      curveGrind: document.querySelector("#curveGrind"),
       predictionBox: document.querySelector("#predictionBox"),
       targetMeta: document.querySelector("#targetMeta"),
       shotTime: document.querySelector("#shotTime"),
@@ -2182,12 +2294,16 @@ fn web_app_html() -> &'static str {
       const prediction = data.prediction;
       if (prediction && prediction.grind !== null) {
         els.predictedGrind.textContent = Number(prediction.grind).toFixed(2);
+        els.curveGrind.textContent = prediction.curve_grind !== null
+          ? `Curve ${Number(prediction.curve_grind).toFixed(2)}`
+          : "Curve --";
         els.predictionBox.dataset.predictedGrind = Number(prediction.grind).toFixed(2);
         els.predictionBox.classList.add("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(prediction.target_seconds))}s target`;
         els.graphWrap.innerHTML = prediction.graph_svg;
       } else {
         els.predictedGrind.textContent = "--";
+        els.curveGrind.textContent = "Curve --";
         els.predictionBox.dataset.predictedGrind = "";
         els.predictionBox.classList.remove("is-actionable");
         els.targetMeta.textContent = `${Math.round(Number(data.target_time))}s target`;
@@ -2751,6 +2867,7 @@ fn render_graph_svg(
     let (y_min, y_max) = shot_time_axis_bounds(target_seconds);
     let model_y_at_min = intercept + (slope * x_min);
     let model_y_at_max = intercept + (slope * x_max);
+    let exponential_model = exponential_time_model(model_points);
 
     let x = |grind: f64| left + ((grind - x_min) / (x_max - x_min) * plot_width);
     let y = |seconds: f64| top + ((y_max - seconds) / (y_max - y_min) * plot_height);
@@ -2815,10 +2932,33 @@ fn render_graph_svg(
 
     svg.push_str(&format!(
         r##"<g clip-path="url(#plot-area)">
-<line x1="{line_x1:.2}" y1="{line_y1:.2}" x2="{line_x2:.2}" y2="{line_y2:.2}" stroke="#60a5fa" stroke-width="3"/>
 <line x1="{left:.2}" y1="{target_y:.2}" x2="{:.2}" y2="{target_y:.2}" stroke="#a6e22e" stroke-width="2" stroke-dasharray="7 5"/>
 "##,
         left + plot_width
+    ));
+
+    if let Some((log_intercept, log_slope)) = exponential_model {
+        let curve_points = (0..=48)
+            .filter_map(|index| {
+                let grind = x_min + ((x_max - x_min) * index as f64 / 48.0);
+                let seconds = (log_intercept + (log_slope * grind)).exp();
+                seconds
+                    .is_finite()
+                    .then(|| format!("{:.2},{:.2}", x(grind), y(seconds)))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !curve_points.is_empty() {
+            svg.push_str(&format!(
+                r##"<polyline points="{curve_points}" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 9" opacity="0.9"/>
+"##
+            ));
+        }
+    }
+
+    svg.push_str(&format!(
+        r##"<line x1="{line_x1:.2}" y1="{line_y1:.2}" x2="{line_x2:.2}" y2="{line_y2:.2}" stroke="#60a5fa" stroke-width="3"/>
+"##
     ));
 
     if predicted_grind.is_finite() {
@@ -2883,6 +3023,29 @@ fn report_prediction(
     );
     println!("{label}_r_squared: {}", fmt(r_squared));
     1
+}
+
+fn exponential_time_model(points: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let log_points = points
+        .iter()
+        .filter_map(|(grind, seconds)| {
+            (*seconds > 0.0 && seconds.is_finite() && grind.is_finite())
+                .then(|| (*grind, seconds.ln()))
+        })
+        .collect::<Vec<_>>();
+
+    theil_sen_model(&log_points)
+}
+
+fn exponential_predicted_grind(points: &[(f64, f64)], target_seconds: f64) -> Option<f64> {
+    if target_seconds <= 0.0 || !target_seconds.is_finite() {
+        return None;
+    }
+
+    let (log_intercept, log_slope) = exponential_time_model(points)?;
+    let predicted = (target_seconds.ln() - log_intercept) / log_slope;
+
+    predicted.is_finite().then_some(predicted)
 }
 
 fn theil_sen_model(points: &[(f64, f64)]) -> Option<(f64, f64)> {
@@ -3078,6 +3241,16 @@ mod tests {
     }
 
     #[test]
+    fn exponential_model_predicts_target_grind() {
+        let points = vec![(10.0, 10.0), (12.0, 20.0)];
+
+        let predicted = exponential_predicted_grind(&points, 20.0).expect("curve prediction");
+
+        assert_eq!(fmt(predicted), "12.00");
+        assert!(exponential_predicted_grind(&points, 0.0).is_none());
+    }
+
+    #[test]
     fn graph_svg_contains_prediction_context() {
         let recipe = Recipe {
             name: "Test & Espresso".to_string(),
@@ -3093,6 +3266,8 @@ mod tests {
         assert!(svg.contains("<svg"));
         assert!(svg.contains("Test &amp; Espresso"));
         assert!(svg.contains("stroke=\"#60a5fa\""));
+        assert!(svg.contains("stroke=\"#fbbf24\""));
+        assert!(svg.contains("stroke-dasharray=\"3 9\""));
         assert!(!svg.contains("local Theil-Sen line"));
         assert!(svg.contains(">60.00s</text>"));
     }
